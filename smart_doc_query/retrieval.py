@@ -1,14 +1,16 @@
 import pickle
 import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 import database
 
-RELEVANCE_THRESHOLD = 0.15  # drop any chunk below 15% similarity
+# Load model once at startup — downloads ~80MB on first run, cached after
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+RELEVANCE_THRESHOLD = 0.25  # neural embeddings score higher than TF-IDF; 25% is a meaningful match
 NOT_FOUND_MSG = 'The document does not contain enough information to answer this question.'
 
-# Short vague queries benefit from expansion so TF-IDF has more signal to work with
 QUERY_EXPANSIONS = {
     'what is this project':  'what is the purpose description and overview of this project system',
     'what is the project':   'what is the purpose description and overview of this project system',
@@ -27,55 +29,49 @@ def expand_query(query_text):
 
 
 def embed_to_blob(text):
-    """Store raw text as blob — TF-IDF is computed at query time."""
-    return pickle.dumps(text)
+    vector = model.encode(text)
+    return pickle.dumps(vector)
 
 
-def blob_to_text(blob):
+def blob_to_array(blob):
     return pickle.loads(blob)
 
 
 def get_relevant_sections(query_text, top_k=5):
-    query_text = expand_query(query_text)
+    expanded = expand_query(query_text)
+    query_vec = model.encode(expanded).reshape(1, -1)
 
     rows = database.query_db(
-        'SELECT section_id, document_id, section_text FROM DOCUMENT_SECTION'
+        'SELECT section_id, document_id, section_text, embedding FROM DOCUMENT_SECTION'
     )
     if not rows:
         return []
 
-    texts = [row['section_text'] for row in rows]
-    all_texts = texts + [query_text]
-
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform(all_texts)
-
-    query_vec = tfidf_matrix[-1]
-    section_vecs = tfidf_matrix[:-1]
-    scores = cosine_similarity(query_vec, section_vecs)[0]
-
     results = []
-    for i, row in enumerate(rows):
+    for row in rows:
+        if row['embedding'] is None:
+            continue
+        section_vec = blob_to_array(row['embedding']).reshape(1, -1)
+        score = float(cosine_similarity(query_vec, section_vec)[0][0])
         results.append({
             'section_id':   row['section_id'],
             'document_id':  row['document_id'],
             'section_text': row['section_text'],
-            'score':        float(scores[i])
+            'score':        score
         })
 
     results.sort(key=lambda x: x['score'], reverse=True)
 
-    # --- Deduplication: keep only the highest-scoring chunk per unique text fingerprint ---
-    seen_fingerprints = set()
+    # Deduplication: skip chunks that start the same way
+    seen = set()
     deduplicated = []
     for r in results:
-        # Use first 80 chars as a near-duplicate fingerprint
         fingerprint = r['section_text'][:80].strip().lower()
-        if fingerprint not in seen_fingerprints:
-            seen_fingerprints.add(fingerprint)
+        if fingerprint not in seen:
+            seen.add(fingerprint)
             deduplicated.append(r)
 
-    # --- Threshold filter: drop chunks below 15% similarity ---
+    # Drop chunks below relevance threshold
     filtered = [r for r in deduplicated if r['score'] >= RELEVANCE_THRESHOLD]
 
     return filtered[:top_k]
@@ -85,7 +81,10 @@ def generate_answer(query_text, sections):
     if not sections:
         return NOT_FOUND_MSG
 
-    # Collect sentences only from sections that passed the threshold
+    expanded = expand_query(query_text)
+    query_vec = model.encode(expanded).reshape(1, -1)
+
+    # Collect sentences from all retrieved sections
     all_sentences = []
     for rank, section in enumerate(sections):
         sentences = [
@@ -99,36 +98,33 @@ def generate_answer(query_text, sections):
     if not all_sentences:
         return NOT_FOUND_MSG
 
-    # Score sentences by TF-IDF similarity to the (possibly expanded) query
-    expanded_query = expand_query(query_text)
-    all_texts = [s for _, _, s in all_sentences] + [expanded_query]
-    vectorizer = TfidfVectorizer(stop_words='english')
-    try:
-        tfidf_matrix = vectorizer.fit_transform(all_texts)
-    except ValueError:
-        return NOT_FOUND_MSG
+    # Score each sentence using neural embeddings
+    sentence_texts = [s for _, _, s in all_sentences]
+    sentence_vecs = model.encode(sentence_texts)
+    scores = cosine_similarity(query_vec, sentence_vecs)[0]
 
-    query_vec = tfidf_matrix[-1]
-    sent_vecs = tfidf_matrix[:-1]
-    tfidf_scores = cosine_similarity(query_vec, sent_vecs)[0]
-
-    # Combine TF-IDF score with a positional bonus for early sentences in the top section
+    # Combine similarity score with positional bonus for early sentences in top section
     ranked = []
     for i, (rank, pos, sentence) in enumerate(all_sentences):
-        position_bonus = 0.15 if (rank == 0 and pos < 3) else 0.0
-        ranked.append((tfidf_scores[i] + position_bonus, sentence))
+        position_bonus = 0.05 if (rank == 0 and pos < 3) else 0.0
+        ranked.append((float(scores[i]) + position_bonus, sentence))
 
     ranked.sort(key=lambda x: x[0], reverse=True)
 
-    # Deduplicate sentences in the answer
-    seen = set()
+    # Only keep sentences scoring at least 40% of the top score
+    top_score = ranked[0][0] if ranked else 0
+    min_score = top_score * 0.4
+
+    seen_text = set()
     top_sentences = []
-    for _, sentence in ranked:
+    for score, sentence in ranked:
+        if score < min_score:
+            break
         norm = sentence.strip().lower()
-        if norm not in seen and sentence.strip():
-            seen.add(norm)
+        if norm not in seen_text and sentence.strip():
+            seen_text.add(norm)
             top_sentences.append(sentence.strip())
-        if len(top_sentences) == 5:
+        if len(top_sentences) == 3:
             break
 
     if not top_sentences:

@@ -1,5 +1,6 @@
 flask
 werkzeug
 PyPDF2
+sentence-transformers
 scikit-learn
 numpy

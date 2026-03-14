@@ -59,13 +59,11 @@ A Retrieval-Augmented AI system that:
 | Backend | Python, Flask |
 | Database | SQLite |
 | PDF Extraction | PyPDF2 |
-| Embeddings | TF-IDF vectorizer (scikit-learn) |
+| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
 | Similarity Search | scikit-learn (cosine similarity) |
 | Frontend | Bootstrap 5, Jinja2 Templates |
 
 All libraries are free and open-source. No external API keys required. Runs fully locally.
-
-> **Note on Embeddings:** The original design specified `sentence-transformers` (all-MiniLM-L6-v2) for vector embeddings. The implementation uses **TF-IDF + cosine similarity** (scikit-learn) instead. This is because PyTorch — required by sentence-transformers — has no pre-built wheel for Python 3.13 on Intel Mac. TF-IDF achieves the same retrieval concept and installs cleanly everywhere, including Windows.
 
 ---
 

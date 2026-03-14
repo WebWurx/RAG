@@ -150,9 +150,10 @@ def upload():
         chunks = document_processor.chunk_text(text)
 
     for chunk_text, page_num in chunks:
+        embedding_blob = retrieval.embed_to_blob(chunk_text)
         database.insert_db(
-            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, page_number) VALUES (?, ?, ?)',
-            (doc_id, chunk_text, page_num)
+            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, page_number, embedding) VALUES (?, ?, ?, ?)',
+            (doc_id, chunk_text, page_num, embedding_blob)
         )
 
     flash(f'"{filename}" uploaded and processed successfully ({len(chunks)} sections).', 'success')
