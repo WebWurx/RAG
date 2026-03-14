@@ -1,0 +1,26 @@
+body {
+    background-color: #f8f9fa;
+}
+
+.card {
+    border-radius: 10px;
+}
+
+.answer-card {
+    border-left: 5px solid #198754;
+}
+
+.answer-text {
+    font-size: 1.05rem;
+    line-height: 1.7;
+    color: #212529;
+}
+
+.navbar-brand {
+    font-size: 1.3rem;
+    letter-spacing: 0.5px;
+}
+
+table td {
+    vertical-align: middle;
+}

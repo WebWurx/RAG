@@ -1,0 +1,21 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Database
+*.db
+
+# Uploads
+smart_doc_query/uploads/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

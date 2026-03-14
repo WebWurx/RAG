@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block content %}
+
+<div class="row justify-content-center">
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0">Ask a Question</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Type your question in natural language. The system will search your uploaded documents and generate an answer.</p>
+                <form method="POST">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Your Question</label>
+                        <textarea name="query_text" class="form-control" rows="4"
+                                  placeholder="e.g. What are the main objectives of the proposed system?"
+                                  required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">Search &amp; Generate Answer</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
