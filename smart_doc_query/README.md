@@ -1,9 +1,6 @@
 # Smart Doc Query
 ### Retrieval-Augmented AI System for Intelligent Document Querying
 
-**Author:** Hiba
-**Course:** MCA
-**Roll No.:** CUAYMCA007
 
 ---
 
