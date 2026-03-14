@@ -33,6 +33,7 @@ def init_db():
             section_id   INTEGER PRIMARY KEY AUTOINCREMENT,
             document_id  INTEGER NOT NULL,
             section_text TEXT    NOT NULL,
+            page_number  INTEGER NOT NULL DEFAULT 1,
             embedding    BLOB,
             FOREIGN KEY (document_id) REFERENCES DOCUMENT(document_id)
         );

@@ -135,25 +135,28 @@ def upload():
         (session['user_id'], filename, datetime.now().strftime('%Y-%m-%d %H:%M'), file_type)
     )
 
-    # Extract text
+    # Extract text and chunk with page tracking
     if file_type == 'pdf':
-        text = document_processor.extract_text_from_pdf(filepath)
+        pages = document_processor.extract_text_from_pdf(filepath)
+        if not pages:
+            flash('Could not extract text from the file.', 'danger')
+            return redirect(url_for('dashboard'))
+        chunks = document_processor.chunk_pdf_pages(pages)
     else:
         text = document_processor.extract_text_from_txt(filepath)
+        if not text.strip():
+            flash('Could not extract text from the file.', 'danger')
+            return redirect(url_for('dashboard'))
+        chunks = document_processor.chunk_text(text)
 
-    if not text.strip():
-        flash('Could not extract text from the file.', 'danger')
-        return redirect(url_for('dashboard'))
-
-    # Chunk and store sections
-    chunks = document_processor.chunk_text(text)
-    for chunk in chunks:
+    for chunk_text, page_num in chunks:
         database.insert_db(
-            'INSERT INTO DOCUMENT_SECTION (document_id, section_text) VALUES (?, ?)',
-            (doc_id, chunk)
+            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, page_number) VALUES (?, ?, ?)',
+            (doc_id, chunk_text, page_num)
         )
 
     flash(f'"{filename}" uploaded and processed successfully ({len(chunks)} sections).', 'success')
+
     return redirect(url_for('dashboard'))
 
 
@@ -243,7 +246,7 @@ def answer(query_id):
     )
 
     results = database.query_db('''
-        SELECT rr.similarity_score, ds.section_text, d.document_name
+        SELECT rr.similarity_score, ds.section_text, ds.page_number, d.document_name
         FROM RETRIEVAL_RESULT rr
         JOIN DOCUMENT_SECTION ds ON rr.section_id = ds.section_id
         JOIN DOCUMENT d ON ds.document_id = d.document_id
@@ -251,10 +254,19 @@ def answer(query_id):
         ORDER BY rr.similarity_score DESC
     ''', (query_id,))
 
+    # Build compact source citations: {doc_name: sorted list of page numbers}
+    sources = {}
+    for r in results:
+        name = r['document_name']
+        if name not in sources:
+            sources[name] = set()
+        sources[name].add(r['page_number'])
+    sources = {name: sorted(pages) for name, pages in sources.items()}
+
     return render_template('answer.html',
                            query=query_row,
                            answer=answer_row,
-                           results=results)
+                           sources=sources)
 
 
 if __name__ == '__main__':
