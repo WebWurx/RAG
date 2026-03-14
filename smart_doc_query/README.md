@@ -9,7 +9,7 @@
 
 ## Overview
 
-Smart Doc Query is an intelligent document querying system that allows users to upload PDF or TXT documents and ask natural language questions about their content. Instead of relying on traditional keyword-based search, the system uses semantic similarity and NLP techniques to understand the meaning behind a query and retrieve the most relevant sections from uploaded documents — then generates a precise, extractive answer directly from that content.
+Smart Doc Query is an intelligent document querying system that allows users to upload PDF or TXT documents and ask natural language questions about their content. Instead of relying on traditional keyword-based search, the system uses semantic vector embeddings and NLP techniques to understand the meaning behind a query, retrieve the most relevant sections, and generate a precise extractive answer.
 
 ---
 
@@ -40,13 +40,11 @@ A Retrieval-Augmented AI system that:
 
 - User registration and login (session-based authentication)
 - Upload PDF and TXT documents
-- Automatic text extraction and chunking
-- TF-IDF vector similarity search to find relevant sections
+- Automatic text extraction and chunking with page tracking
+- Semantic vector embeddings using `sentence-transformers` (all-MiniLM-L6-v2)
+- Cosine similarity search to find relevant sections
 - Extractive answer generation from top retrieved sections
-- Duplicate chunk removal before answer generation
-- Minimum similarity threshold — low-relevance chunks are filtered out
-- Short query expansion for better retrieval on vague questions
-- Answer page showing the generated answer with inline source citations (PDF name + page numbers)
+- Answer displayed with inline source citations (document name + page numbers)
 - Delete uploaded documents from the dashboard
 - Clean Bootstrap 5 interface
 
@@ -75,7 +73,7 @@ The system uses 6 tables as per the design specification:
 |-------|-----------|---------|
 | USER | user_id (PK), username, email, password | Registration & login |
 | DOCUMENT | document_id (PK), user_id (FK), document_name, upload_date, file_type | Track uploaded files |
-| DOCUMENT_SECTION | section_id (PK), document_id (FK), section_text, page_number, embedding | Chunked content with page tracking |
+| DOCUMENT_SECTION | section_id (PK), document_id (FK), section_text, page_number, embedding | Chunked content with vector embeddings |
 | QUERY | query_id (PK), user_id (FK), query_text, query_date | Store user questions |
 | RETRIEVAL_RESULT | result_id (PK), query_id (FK), section_id (FK), similarity_score | Relevant sections found |
 | ANSWER | answer_id (PK), query_id (FK), answer_text | Generated answer |
@@ -89,15 +87,15 @@ Register / Login
       ↓
 Upload Document (PDF or TXT)
       ↓
-Text Extraction → Chunking (175 words, 25-word overlap) → Stored in DB with page numbers
+Text Extraction → Chunking → Embedding (all-MiniLM-L6-v2) → Stored in DB
       ↓
 User Asks a Question
       ↓
-Query Expanded (if vague) → TF-IDF Cosine Similarity with All Sections
+Query Embedded → Cosine Similarity with All Section Vectors
       ↓
-Top 5 Sections Retrieved → Deduplicated → Filtered (≥15% similarity)
+Top 5 Relevant Sections Retrieved
       ↓
-Extractive Answer Generated → Displayed with Inline Source Citations (PDF + page numbers)
+Extractive Answer Generated → Displayed with Source Citations (PDF + page)
 ```
 
 ---
@@ -123,7 +121,7 @@ smart_doc_query/
     ├── login.html          User login page
     ├── dashboard.html      Upload documents + view uploaded list
     ├── query.html          Ask a question interface
-    └── answer.html         Display answer with inline source citations
+    └── answer.html         Display answer with source citations
 ```
 
 ---
@@ -142,7 +140,7 @@ python app.py
 ```
 Then open `http://127.0.0.1:5000` in your browser.
 
-> **Note:** An internet connection is required on first run to download the Python packages. After that, the system works fully offline.
+> **Note:** An internet connection is required on first run to download packages and the NLP model (~80 MB, once only). After that, the system works fully offline.
 
 ---
 
