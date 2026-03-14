@@ -64,6 +64,14 @@ def init_db():
     ''')
 
     conn.commit()
+
+    # Migration: add page_number column if it doesn't exist (for older databases)
+    try:
+        conn.execute('ALTER TABLE DOCUMENT_SECTION ADD COLUMN page_number INTEGER NOT NULL DEFAULT 1')
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     conn.close()
 
 

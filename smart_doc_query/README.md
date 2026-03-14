@@ -41,10 +41,13 @@ A Retrieval-Augmented AI system that:
 - User registration and login (session-based authentication)
 - Upload PDF and TXT documents
 - Automatic text extraction and chunking
-- Semantic vector embeddings using `sentence-transformers`
-- Cosine similarity search to find relevant sections
+- TF-IDF vector similarity search to find relevant sections
 - Extractive answer generation from top retrieved sections
-- Answer page showing the generated answer + source sections with similarity scores
+- Duplicate chunk removal before answer generation
+- Minimum similarity threshold — low-relevance chunks are filtered out
+- Short query expansion for better retrieval on vague questions
+- Answer page showing the generated answer with inline source citations (PDF name + page numbers)
+- Delete uploaded documents from the dashboard
 - Clean Bootstrap 5 interface
 
 ---
@@ -56,7 +59,7 @@ A Retrieval-Augmented AI system that:
 | Backend | Python, Flask |
 | Database | SQLite |
 | PDF Extraction | PyPDF2 |
-| Embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
+| Embeddings | TF-IDF vectorizer (scikit-learn) |
 | Similarity Search | scikit-learn (cosine similarity) |
 | Frontend | Bootstrap 5, Jinja2 Templates |
 
@@ -74,7 +77,7 @@ The system uses 6 tables as per the design specification:
 |-------|-----------|---------|
 | USER | user_id (PK), username, email, password | Registration & login |
 | DOCUMENT | document_id (PK), user_id (FK), document_name, upload_date, file_type | Track uploaded files |
-| DOCUMENT_SECTION | section_id (PK), document_id (FK), section_text, embedding | Chunked content + vectors |
+| DOCUMENT_SECTION | section_id (PK), document_id (FK), section_text, page_number, embedding | Chunked content with page tracking |
 | QUERY | query_id (PK), user_id (FK), query_text, query_date | Store user questions |
 | RETRIEVAL_RESULT | result_id (PK), query_id (FK), section_id (FK), similarity_score | Relevant sections found |
 | ANSWER | answer_id (PK), query_id (FK), answer_text | Generated answer |
@@ -88,15 +91,15 @@ Register / Login
       ↓
 Upload Document (PDF or TXT)
       ↓
-Text Extraction → Chunking → Embedding → Stored in DB
+Text Extraction → Chunking (175 words, 25-word overlap) → Stored in DB with page numbers
       ↓
 User Asks a Question
       ↓
-Query Embedded → Cosine Similarity with All Sections
+Query Expanded (if vague) → TF-IDF Cosine Similarity with All Sections
       ↓
-Top 5 Relevant Sections Retrieved
+Top 5 Sections Retrieved → Deduplicated → Filtered (≥15% similarity)
       ↓
-Extractive Answer Generated → Displayed with Source Sections
+Extractive Answer Generated → Displayed with Inline Source Citations (PDF + page numbers)
 ```
 
 ---
@@ -122,7 +125,7 @@ smart_doc_query/
     ├── login.html          User login page
     ├── dashboard.html      Upload documents + view uploaded list
     ├── query.html          Ask a question interface
-    └── answer.html         Display answer + retrieved sections
+    └── answer.html         Display answer with inline source citations
 ```
 
 ---
@@ -141,7 +144,7 @@ python app.py
 ```
 Then open `http://127.0.0.1:5000` in your browser.
 
-> **Note:** The first run will download the NLP model (~80 MB). An internet connection is required once for this download. After that, the system works fully offline.
+> **Note:** An internet connection is required on first run to download the Python packages. After that, the system works fully offline.
 
 ---
 
