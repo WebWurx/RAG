@@ -208,7 +208,7 @@ def query():
         )
 
         # Retrieve relevant sections
-        sections = retrieval.get_relevant_sections(query_text, top_k=5)
+        sections = retrieval.get_relevant_sections(query_text, top_k=8)
 
         # Save retrieval results
         for sec in sections:

@@ -90,7 +90,7 @@ User Asks a Question
       ↓
 Query Embedded → Cosine Similarity with All Section Vectors
       ↓
-Top 5 Relevant Sections Retrieved (similarity threshold ≥ 0.25)
+Top 8 Relevant Sections Retrieved (similarity threshold ≥ 0.25)
       ↓
 Sentences scored and filtered (min 25% of top score) → Up to 6 sentences selected
       ↓
@@ -105,7 +105,7 @@ Extractive Answer Generated → Displayed with Source Citations (PDF + page)
 |-----------|-------|-------------|
 | Chunk size | 175 words | Words per document section |
 | Chunk overlap | 25 words | Overlap between consecutive chunks |
-| Top-K retrieval | 5 sections | Number of sections retrieved per query |
+| Top-K retrieval | 8 sections | Number of sections retrieved per query |
 | Relevance threshold | 0.25 | Minimum cosine similarity to include a section |
 | Answer score filter | 25% of top | Minimum sentence score relative to best sentence |
 | Max answer sentences | 6 | Maximum sentences included in a generated answer |

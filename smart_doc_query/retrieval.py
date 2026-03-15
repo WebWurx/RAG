@@ -37,7 +37,7 @@ def blob_to_array(blob):
     return pickle.loads(blob)
 
 
-def get_relevant_sections(query_text, top_k=5):
+def get_relevant_sections(query_text, top_k=8):
     expanded = expand_query(query_text)
     query_vec = model.encode(expanded).reshape(1, -1)
 
@@ -130,7 +130,6 @@ def generate_answer(query_text, sections):
     if not top_sentences:
         return NOT_FOUND_MSG
 
-    answer = '. '.join(top_sentences)
-    if not answer.endswith('.'):
-        answer += '.'
+    top_sentences = list(dict.fromkeys(top_sentences))
+    answer = '\n\n'.join(top_sentences)
     return answer

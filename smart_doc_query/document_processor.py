@@ -1,6 +1,10 @@
 import PyPDF2
 
 
+def _clean_text(text):
+    return text.replace("□", "•").replace("\ufffd", "").strip()
+
+
 def extract_text_from_pdf(filepath):
     """Returns list of (page_number, text) tuples, one per page."""
     pages = []
@@ -9,13 +13,13 @@ def extract_text_from_pdf(filepath):
         for i, page in enumerate(reader.pages, start=1):
             text = page.extract_text()
             if text and text.strip():
-                pages.append((i, text.strip()))
+                pages.append((i, _clean_text(text)))
     return pages
 
 
 def extract_text_from_txt(filepath):
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        return f.read().strip()
+        return _clean_text(f.read())
 
 
 def chunk_pdf_pages(pages, chunk_size=175, overlap=25):
