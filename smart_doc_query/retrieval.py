@@ -111,9 +111,9 @@ def generate_answer(query_text, sections):
 
     ranked.sort(key=lambda x: x[0], reverse=True)
 
-    # Only keep sentences scoring at least 40% of the top score
+    # Only keep sentences scoring at least 25% of the top score
     top_score = ranked[0][0] if ranked else 0
-    min_score = top_score * 0.4
+    min_score = top_score * 0.25
 
     seen_text = set()
     top_sentences = []
@@ -124,7 +124,7 @@ def generate_answer(query_text, sections):
         if norm not in seen_text and sentence.strip():
             seen_text.add(norm)
             top_sentences.append(sentence.strip())
-        if len(top_sentences) == 3:
+        if len(top_sentences) == 6:
             break
 
     if not top_sentences:

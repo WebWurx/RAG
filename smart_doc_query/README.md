@@ -40,7 +40,7 @@ A Retrieval-Augmented AI system that:
 - Automatic text extraction and chunking with page tracking
 - Semantic vector embeddings using `sentence-transformers` (all-MiniLM-L6-v2)
 - Cosine similarity search to find relevant sections
-- Extractive answer generation from top retrieved sections
+- Extractive answer generation from top retrieved sections (up to 6 sentences)
 - Answer displayed with inline source citations (document name + page numbers)
 - Delete uploaded documents from the dashboard
 - Clean Bootstrap 5 interface
@@ -90,10 +90,25 @@ User Asks a Question
       ↓
 Query Embedded → Cosine Similarity with All Section Vectors
       ↓
-Top 5 Relevant Sections Retrieved
+Top 5 Relevant Sections Retrieved (similarity threshold ≥ 0.25)
+      ↓
+Sentences scored and filtered (min 25% of top score) → Up to 6 sentences selected
       ↓
 Extractive Answer Generated → Displayed with Source Citations (PDF + page)
 ```
+
+---
+
+## Configuration Parameters
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Chunk size | 175 words | Words per document section |
+| Chunk overlap | 25 words | Overlap between consecutive chunks |
+| Top-K retrieval | 5 sections | Number of sections retrieved per query |
+| Relevance threshold | 0.25 | Minimum cosine similarity to include a section |
+| Answer score filter | 25% of top | Minimum sentence score relative to best sentence |
+| Max answer sentences | 6 | Maximum sentences included in a generated answer |
 
 ---
 
