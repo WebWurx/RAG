@@ -46,7 +46,9 @@
                         <td>
                             <div style="display:flex; gap:0.4rem;">
                                 <button class="sb-btn sb-btn-outline-view"
-                                        onclick="viewDoc({{ doc['document_id'] }}, '{{ doc['document_name'] | e }}')">
+                                        data-doc-id="{{ doc['document_id'] }}"
+                                        data-doc-name="{{ doc['document_name'] | e }}"
+                                        onclick="viewDoc(this)">
                                     View
                                 </button>
                                 <form method="POST" action="{{ url_for('delete_document', document_id=doc['document_id']) }}"
@@ -175,9 +177,11 @@
 </style>
 
 <script>
-function viewDoc(docId, docName) {
-    const modal = document.getElementById('docModal');
-    const body  = document.getElementById('docModalBody');
+function viewDoc(btn) {
+    const docId   = btn.dataset.docId;
+    const docName = btn.dataset.docName;
+    const modal   = document.getElementById('docModal');
+    const body    = document.getElementById('docModalBody');
     document.getElementById('docModalTitle').textContent = docName;
     body.innerHTML = '<div class="sb-modal-loading">Loading...</div>';
     modal.style.display = 'flex';
