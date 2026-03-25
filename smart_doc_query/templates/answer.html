@@ -1,36 +1,34 @@
 {% extends 'base.html' %}
+
+{% block page_title %}Query Results{% endblock %}
+{% block page_subtitle %}Results for: "{{ query['query_text'] }}"{% endblock %}
+
 {% block content %}
 
-<h4 class="mb-3">Results for: <em>"{{ query['query_text'] }}"</em></h4>
-
-<div class="card shadow-sm answer-card">
-    <div class="card-header bg-success text-white">
-        <h5 class="mb-0">Generated Answer</h5>
-    </div>
-    <div class="card-body">
+<div class="sb-card sb-answer-card">
+    <div class="sb-card-header sb-header-success">Generated Answer</div>
+    <div class="sb-card-body">
         {% if answer %}
-            <p class="answer-text mb-3">{{ answer['answer_text'] }}</p>
+            <p class="sb-answer-text">{{ answer['answer_text'] }}</p>
         {% else %}
-            <p class="text-muted mb-3">No answer could be generated.</p>
+            <p style="color: var(--sb-gray-500); margin:0;">No answer could be generated.</p>
         {% endif %}
 
         {% if sources %}
-        <div class="border-top pt-2">
-            <small class="text-muted">
-                <strong>Sources:</strong>
-                {% for doc_name, pages in sources.items() %}
-                    <span class="badge bg-primary me-1">{{ doc_name }}</span>
-                    p.{{ pages | join(', ') }}{% if not loop.last %} &nbsp;|&nbsp; {% endif %}
-                {% endfor %}
-            </small>
+        <div class="sb-sources">
+            <strong>Sources:</strong>
+            {% for doc_name, pages in sources.items() %}
+                <span class="sb-badge sb-badge-primary" style="margin-left:0.35rem;">{{ doc_name }}</span>
+                p.{{ pages | join(', ') }}{% if not loop.last %} &nbsp;|&nbsp; {% endif %}
+            {% endfor %}
         </div>
         {% endif %}
     </div>
 </div>
 
-<div class="mt-3">
-    <a href="{{ url_for('query') }}" class="btn btn-outline-success">Ask Another Question</a>
-    <a href="{{ url_for('dashboard') }}" class="btn btn-outline-secondary ms-2">Dashboard</a>
+<div style="margin-top: 1rem;">
+    <a href="{{ url_for('query') }}" class="sb-btn sb-btn-outline-success">Ask Another Question</a>
+    <a href="{{ url_for('dashboard') }}" class="sb-btn sb-btn-outline-secondary" style="margin-left:0.5rem;">Dashboard</a>
 </div>
 
 {% endblock %}

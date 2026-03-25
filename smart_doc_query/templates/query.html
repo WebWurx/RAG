@@ -1,22 +1,26 @@
 {% extends 'base.html' %}
+
+{% block page_title %}Ask a Question{% endblock %}
+{% block page_subtitle %}Search your documents using natural language{% endblock %}
+
 {% block content %}
 
 <div class="row justify-content-center">
     <div class="col-md-7">
-        <div class="card shadow-sm">
-            <div class="card-header bg-success text-white">
-                <h5 class="mb-0">Ask a Question</h5>
-            </div>
-            <div class="card-body">
-                <p class="text-muted">Type your question in natural language. The system will search your uploaded documents and generate an answer.</p>
+        <div class="sb-card">
+            <div class="sb-card-header sb-header-success">Ask a Question</div>
+            <div class="sb-card-body">
+                <p style="font-size:13px; color: var(--sb-gray-600); margin-bottom:1rem;">
+                    Type your question in natural language. The system will search your uploaded documents and generate an answer.
+                </p>
                 <form method="POST">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Your Question</label>
-                        <textarea name="query_text" class="form-control" rows="4"
+                    <div class="sb-form-group">
+                        <label class="sb-form-label">Your Question</label>
+                        <textarea name="query_text" class="sb-form-control" rows="4"
                                   placeholder="e.g. What are the main objectives of the proposed system?"
                                   required></textarea>
                     </div>
-                    <button type="submit" class="btn btn-success w-100">Search &amp; Generate Answer</button>
+                    <button type="submit" class="sb-btn sb-btn-success sb-btn-w100">Search &amp; Generate Answer</button>
                 </form>
             </div>
         </div>
