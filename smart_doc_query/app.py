@@ -3,7 +3,7 @@ from datetime import datetime
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect,
-                   url_for, session, flash, jsonify)
+                   url_for, session, flash, jsonify, send_from_directory)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
@@ -192,24 +192,16 @@ def delete_document(document_id):
     return redirect(url_for('dashboard'))
 
 
-@app.route('/document/<int:document_id>/preview')
+@app.route('/document/<int:document_id>/file')
 @login_required
-def document_preview(document_id):
+def document_file(document_id):
     doc = database.query_db(
         'SELECT * FROM DOCUMENT WHERE document_id = ? AND user_id = ?',
         (document_id, session['user_id']), one=True
     )
     if not doc:
-        return jsonify({'error': 'Not found'}), 404
-
-    sections = database.query_db(
-        'SELECT section_text, page_number FROM DOCUMENT_SECTION WHERE document_id = ? ORDER BY page_number, section_id',
-        (document_id,)
-    )
-    return jsonify({
-        'name': doc['document_name'],
-        'sections': [{'text': s['section_text'], 'page': s['page_number']} for s in sections]
-    })
+        return 'Not found', 404
+    return send_from_directory(app.config['UPLOAD_FOLDER'], doc['document_name'])
 
 
 @app.route('/query', methods=['GET', 'POST'])
