@@ -117,6 +117,15 @@ The core NLP module. The sentence transformer model loads once at import time an
 - `"who made this"` → `"who is the author submitted by name of this project"`
 - and several similar mappings
 
+**`detect_question_type(query_text)`** — classifies the query as `'definition'`, `'list'`, or `'general'` using grammar structure only (no topic-specific knowledge):
+- `definition` — "what is X", "define X", "what does X mean", "what is meant by X"
+- `list` — contains a count word or digit + a list noun ("two aspects", "three types"), or starts with "list the" / "name the"
+- `general` — everything else
+
+**`extract_list_count(query_text)`** — parses the requested count from a list question ("two" → 2, "3" → 3). Returns `None` if no count is found.
+
+**`extract_list_items(section_text)`** — finds list-structured content in any document section using text formatting patterns: numbered lines (`1.`, `(1)`, `a)`), bullet markers (`-`, `•`, `*`), and ordinal sentence starters (First, Second, Third…).
+
 **`embed_to_blob(text)`** — encodes text to a 384-float numpy vector and serialises it with `pickle` for SQLite BLOB storage.
 
 **`get_relevant_sections(query_text, top_k=8)`**:
@@ -128,13 +137,15 @@ The core NLP module. The sentence transformer model loads once at import time an
 6. Drops chunks with similarity below 0.25
 7. Returns the top `top_k` results sorted by score
 
-**`generate_answer(query_text, sections)`**:
-1. Splits all retrieved section texts into individual sentences (split on `.`, minimum 20 chars)
-2. Encodes all sentences in one batch
-3. Scores each sentence via cosine similarity to the query vector
-4. Applies a position bonus (+0.05) to the first 3 sentences of the top-ranked section
-5. Drops sentences scoring below 25% of the top sentence's score
-6. Deduplicates and returns up to 6 sentences joined by double newlines
+**`generate_answer(query_text, sections)`** — branches by question type:
+
+| Type | Logic | Max output | Score threshold |
+|------|-------|-----------|----------------|
+| `list` | Extract list items from sections → score with cosine similarity → return top N | N from query | — |
+| `definition` | Sentence cosine scoring, no position bonus | 2 sentences | 50% of top score |
+| `general` | Sentence cosine scoring with position bonus (+0.05 for top section) | 6 sentences | 25% of top score |
+
+Each path falls through to `general` if not enough content is found.
 
 ### `app.py`
 Flask application with 10 routes. A `@login_required` decorator protects all authenticated routes. On startup it calls `database.init_db()` and creates the uploads directory.
@@ -242,13 +253,25 @@ For each relevant section:
     RETRIEVAL_RESULT row inserted (query_id, section_id, score)
         ↓
 retrieval.generate_answer(query_text, sections)
-    ├── Split all section texts into sentences (min 20 chars)
-    ├── Encode all sentences in one batch
-    ├── Score each sentence via cosine similarity to query
-    ├── Apply position bonus (+0.05) to first 3 sentences of top section
-    ├── Drop sentences scoring below 25% of top score
-    ├── Deduplicate sentences
-    └── Return up to 6 sentences joined by \n\n
+    ├── detect_question_type() → 'definition' | 'list' | 'general'
+    │
+    ├── LIST path:
+    │   ├── extract_list_count() → N
+    │   ├── extract_list_items() on each section (numbered/bulleted/ordinal lines)
+    │   ├── Score items via cosine similarity
+    │   └── Return top N items joined by \n\n
+    │
+    ├── DEFINITION path:
+    │   ├── Split sections into sentences (min 20 chars)
+    │   ├── Encode + cosine score (no position bonus)
+    │   ├── Drop sentences below 50% of top score
+    │   └── Return up to 2 sentences
+    │
+    └── GENERAL path:
+        ├── Split sections into sentences (min 20 chars)
+        ├── Encode + cosine score + position bonus (+0.05, top section)
+        ├── Drop sentences below 25% of top score
+        └── Return up to 6 sentences joined by \n\n
         ↓
 ANSWER record inserted
         ↓
@@ -303,9 +326,12 @@ The **document preview modal** opens the raw file inside a full-screen iframe. C
 | `OVERLAP` | 25 words | `document_processor.py` | Shared words between consecutive chunks |
 | `TOP_K` | 8 | `app.py` | Max sections retrieved per query |
 | `RELEVANCE_THRESHOLD` | 0.25 | `retrieval.py` | Minimum cosine similarity to include a section |
-| Answer score filter | 25% of top | `retrieval.py` | Minimum sentence score relative to the highest-scoring sentence |
-| Max answer sentences | 6 | `retrieval.py` | Hard cap on sentences in the generated answer |
-| Position bonus | +0.05 | `retrieval.py` | Score boost for the first 3 sentences of the top-ranked section |
+| Answer score filter (general) | 25% of top | `retrieval.py` | Minimum sentence score for general questions |
+| Answer score filter (definition) | 50% of top | `retrieval.py` | Tighter threshold for definition questions |
+| Max answer sentences (general) | 6 | `retrieval.py` | Hard cap for general questions |
+| Max answer sentences (definition) | 2 | `retrieval.py` | Hard cap for definition questions |
+| Max list items | N from query | `retrieval.py` | Returns exactly the count requested (e.g. "two aspects" → 2) |
+| Position bonus | +0.05 | `retrieval.py` | Score boost for first 3 sentences of top section (general path only) |
 | Embedding model | `all-MiniLM-L6-v2` | `retrieval.py` | 384-dim output, ~80 MB, downloaded once and cached |
 
 ---
