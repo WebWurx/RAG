@@ -217,11 +217,12 @@ def generate_answer(query_text, sections):
     # ── COLLECT SENTENCES (shared by definition + general paths) ──────────────
     all_sentences = []
     for rank, section in enumerate(sections):
-        fragments = re.split(r'[.\n•■▌]+', section['section_text'])
+        fragments = re.split(r'[.\n\u2022\u2023\u2043\u2580-\u25FF]+', section['section_text'])
         sentences = []
         for frag in fragments:
             cleaned = re.sub(r'^\s*\d+\s*', '', frag)
-            cleaned = re.sub(r'^[•■▌\-\*\s]+', '', cleaned).strip()
+            cleaned = re.sub(r'^[\u2022\u2023\u2043\u2580-\u25FF\-\*\s]+', '', cleaned).strip()
+            cleaned = re.sub(r'^[a-z]\s+(?=[A-Z])', '', cleaned)
             if len(cleaned) > 20:
                 sentences.append(cleaned)
         for pos, sentence in enumerate(sentences):
