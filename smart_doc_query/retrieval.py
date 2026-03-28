@@ -217,11 +217,13 @@ def generate_answer(query_text, sections):
     # ── COLLECT SENTENCES (shared by definition + general paths) ──────────────
     all_sentences = []
     for rank, section in enumerate(sections):
-        sentences = [
-            s.strip()
-            for s in section['section_text'].replace('\n', ' ').split('.')
-            if len(s.strip()) > 20
-        ]
+        fragments = re.split(r'[.\n•■▌]+', section['section_text'])
+        sentences = []
+        for frag in fragments:
+            cleaned = re.sub(r'^\s*\d+\s*', '', frag)
+            cleaned = re.sub(r'^[•■▌\-\*\s]+', '', cleaned).strip()
+            if len(cleaned) > 20:
+                sentences.append(cleaned)
         for pos, sentence in enumerate(sentences):
             all_sentences.append((rank, pos, sentence))
 
@@ -234,30 +236,21 @@ def generate_answer(query_text, sections):
 
     # ── DEFINITION PATH ───────────────────────────────────────────────────────
     if q_type == 'definition':
-        # No position bonus; tighter threshold (50%); max 2 sentences
         ranked = [
             (float(scores[i]), sentence)
             for i, (_, _, sentence) in enumerate(all_sentences)
         ]
         ranked.sort(key=lambda x: x[0], reverse=True)
         top_score = ranked[0][0] if ranked else 0
-        min_score = top_score * 0.50
+        min_score = top_score * 0.70
 
-        seen_text = set()
-        top_sentences = []
         for score, sentence in ranked:
             if score < min_score:
                 break
-            norm = sentence.strip().lower()
-            if norm not in seen_text and sentence.strip():
-                seen_text.add(norm)
-                top_sentences.append(sentence.strip())
-            if len(top_sentences) == 2:
-                break
+            if sentence.strip():
+                return sentence.strip()
 
-        if top_sentences:
-            return '\n\n'.join(list(dict.fromkeys(top_sentences)))
-        # No sentences survived tight threshold — fall through to general
+        return NOT_FOUND_MSG
 
     # ── GENERAL PATH ──────────────────────────────────────────────────────────
     ranked = []
