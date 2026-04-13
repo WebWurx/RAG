@@ -1,10 +1,21 @@
+"""
+Smart Doc Query — Main Flask Application
+
+Retrieval-Augmented AI System for Intelligent Document Querying
+
+System flow as per DFD Level 1 (Design Phase, Page 5):
+    User → register → login → upload document → ask query → generate answer
+
+Tech stack as per Study Phase (Page 9):
+    Python, Flask, SQLite
+"""
+
 import os
 from datetime import datetime
 from functools import wraps
 
 from flask import (Flask, render_template, request, redirect,
-                   url_for, session, flash, jsonify, send_from_directory)
-from werkzeug.security import generate_password_hash, check_password_hash
+                   url_for, session, flash)
 from werkzeug.utils import secure_filename
 
 import config
@@ -21,10 +32,12 @@ database.init_db()
 
 
 def allowed_file(filename):
+    """Check if the file type is PDF or TXT as per Study Phase (Page 4)."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
 
 
 def login_required(f):
+    """Session-based access control as implied by the login process in DFD."""
     @wraps(f)
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
@@ -34,7 +47,7 @@ def login_required(f):
     return decorated
 
 
-# ── Routes ──────────────────────────────────────────────────────────────────
+# ── Routes (following DFD Level 1) ──────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -43,6 +56,9 @@ def index():
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
+    """User registration — DFD Level 1, Process 1: register
+    Stores data in USER table (Design Phase, Page 9).
+    """
     if request.method == 'POST':
         username = request.form['username'].strip()
         email    = request.form['email'].strip()
@@ -60,10 +76,9 @@ def register():
             flash('Username or email already exists.', 'danger')
             return render_template('register.html')
 
-        hashed = generate_password_hash(password)
         database.insert_db(
             'INSERT INTO USER (username, email, password) VALUES (?, ?, ?)',
-            (username, email, hashed)
+            (username, email, password)
         )
         flash('Registration successful! Please log in.', 'success')
         return redirect(url_for('login'))
@@ -73,14 +88,18 @@ def register():
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """User login — DFD Level 1, Process 2: login
+    Validates against USER table, stores to login data store.
+    """
     if request.method == 'POST':
         username = request.form['username'].strip()
         password = request.form['password'].strip()
 
         user = database.query_db(
-            'SELECT * FROM USER WHERE username = ?', (username,), one=True
+            'SELECT * FROM USER WHERE username = ? AND password = ?',
+            (username, password), one=True
         )
-        if user and check_password_hash(user['password'], password):
+        if user:
             session['user_id']  = user['user_id']
             session['username'] = user['username']
             return redirect(url_for('dashboard'))
@@ -101,6 +120,9 @@ def logout():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    """Dashboard — shows uploaded documents.
+    Reads from DOCUMENT table (Design Phase, Page 9).
+    """
     docs = database.query_db(
         'SELECT * FROM DOCUMENT WHERE user_id = ? ORDER BY upload_date DESC',
         (session['user_id'],)
@@ -111,6 +133,12 @@ def dashboard():
 @app.route('/upload', methods=['POST'])
 @login_required
 def upload():
+    """Upload document — DFD Level 1, Process 3: upload document
+    Study Phase (Page 4): "users can upload documents such as PDFs or text files"
+    Study Phase (Page 4): "processed to extract textual content, which is then
+    divided into smaller meaningful sections"
+    Stores to DOCUMENT and DOCUMENT_SECTION tables.
+    """
     if 'file' not in request.files:
         flash('No file part in the request.', 'danger')
         return redirect(url_for('dashboard'))
@@ -129,110 +157,71 @@ def upload():
     filepath  = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
 
-    # Save document record
+    # Save to DOCUMENT table
     doc_id = database.insert_db(
         'INSERT INTO DOCUMENT (user_id, document_name, upload_date, file_type) VALUES (?, ?, ?, ?)',
-        (session['user_id'], filename, datetime.now().strftime('%Y-%m-%d %H:%M'), file_type)
+        (session['user_id'], filename, datetime.now().strftime('%Y-%m-%d'), file_type)
     )
 
-    # Extract text and chunk with page tracking
+    # Extract text from uploaded document
     if file_type == 'pdf':
-        pages = document_processor.extract_text_from_pdf(filepath)
-        if not pages:
-            flash('Could not extract text from the file.', 'danger')
-            return redirect(url_for('dashboard'))
-        chunks = document_processor.chunk_pdf_pages(pages)
+        text = document_processor.extract_text_from_pdf(filepath)
     else:
         text = document_processor.extract_text_from_txt(filepath)
-        if not text.strip():
-            flash('Could not extract text from the file.', 'danger')
-            return redirect(url_for('dashboard'))
-        chunks = document_processor.chunk_text(text)
 
-    for chunk_text, page_num in chunks:
-        embedding_blob = retrieval.embed_to_blob(chunk_text)
+    if not text.strip():
+        flash('Could not extract text from the file.', 'danger')
+        return redirect(url_for('dashboard'))
+
+    # Divide into smaller meaningful sections and store with vector representations
+    # Study Phase (Page 4): "stored in a database along with their
+    # corresponding vector representations for efficient retrieval"
+    chunks = document_processor.chunk_text(text)
+    for chunk in chunks:
+        embedding_blob = retrieval.embed_to_blob(chunk)
         database.insert_db(
-            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, page_number, embedding) VALUES (?, ?, ?, ?)',
-            (doc_id, chunk_text, page_num, embedding_blob)
+            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, embedding) VALUES (?, ?, ?)',
+            (doc_id, chunk, embedding_blob)
         )
 
     flash(f'"{filename}" uploaded and processed successfully ({len(chunks)} sections).', 'success')
-
     return redirect(url_for('dashboard'))
-
-
-@app.route('/delete/<int:document_id>', methods=['POST'])
-@login_required
-def delete_document(document_id):
-    doc = database.query_db(
-        'SELECT * FROM DOCUMENT WHERE document_id = ? AND user_id = ?',
-        (document_id, session['user_id']), one=True
-    )
-    if not doc:
-        flash('Document not found.', 'danger')
-        return redirect(url_for('dashboard'))
-
-    # Delete physical file
-    filepath = os.path.join(app.config['UPLOAD_FOLDER'], doc['document_name'])
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
-    # Delete sections and cascade to retrieval results
-    sections = database.query_db(
-        'SELECT section_id FROM DOCUMENT_SECTION WHERE document_id = ?', (document_id,)
-    )
-    for section in sections:
-        database.insert_db(
-            'DELETE FROM RETRIEVAL_RESULT WHERE section_id = ?', (section['section_id'],)
-        )
-    database.insert_db('DELETE FROM DOCUMENT_SECTION WHERE document_id = ?', (document_id,))
-    database.insert_db('DELETE FROM DOCUMENT WHERE document_id = ?', (document_id,))
-
-    flash(f'"{doc["document_name"]}" deleted successfully.', 'success')
-    return redirect(url_for('dashboard'))
-
-
-@app.route('/document/<int:document_id>/file')
-@login_required
-def document_file(document_id):
-    doc = database.query_db(
-        'SELECT * FROM DOCUMENT WHERE document_id = ? AND user_id = ?',
-        (document_id, session['user_id']), one=True
-    )
-    if not doc:
-        return 'Not found', 404
-    return send_from_directory(app.config['UPLOAD_FOLDER'], doc['document_name'])
 
 
 @app.route('/query', methods=['GET', 'POST'])
 @login_required
 def query():
+    """Ask query — DFD Level 1, Process 4: ask query
+    Study Phase (Page 4): "user enters a question in natural language"
+    Stores to QUERY table, retrieves from DOCUMENT_SECTION,
+    stores results in RETRIEVAL_RESULT, generates answer in ANSWER.
+    """
     if request.method == 'POST':
         query_text = request.form['query_text'].strip()
         if not query_text:
             flash('Please enter a question.', 'danger')
             return render_template('query.html')
 
-        # Save query
+        # Save query to QUERY table
         query_id = database.insert_db(
             'INSERT INTO QUERY (user_id, query_text, query_date) VALUES (?, ?, ?)',
-            (session['user_id'], query_text, datetime.now().strftime('%Y-%m-%d %H:%M'))
+            (session['user_id'], query_text, datetime.now().strftime('%Y-%m-%d'))
         )
 
-        # Retrieve relevant sections
-        sections = retrieval.get_relevant_sections(query_text, top_k=8)
+        # Retrieve relevant sections based on semantic similarity
+        sections = retrieval.get_relevant_sections(query_text)
 
-        # Save retrieval results
+        # Save retrieval results to RETRIEVAL_RESULT table
         for sec in sections:
             database.insert_db(
                 'INSERT INTO RETRIEVAL_RESULT (query_id, section_id, similarity_score) VALUES (?, ?, ?)',
                 (query_id, sec['section_id'], sec['score'])
             )
 
-        # Generate answer
+        # Generate answer from retrieved content
         answer_text = retrieval.generate_answer(query_text, sections)
 
-        # Save answer
+        # Save answer to ANSWER table
         database.insert_db(
             'INSERT INTO ANSWER (query_id, answer_text) VALUES (?, ?)',
             (query_id, answer_text)
@@ -246,6 +235,9 @@ def query():
 @app.route('/answer/<int:query_id>')
 @login_required
 def answer(query_id):
+    """Display answer — DFD Level 1, Process 5: generate answer
+    Reads from QUERY, ANSWER, and RETRIEVAL_RESULT tables.
+    """
     query_row = database.query_db(
         'SELECT * FROM QUERY WHERE query_id = ? AND user_id = ?',
         (query_id, session['user_id']), one=True
@@ -258,29 +250,10 @@ def answer(query_id):
         'SELECT * FROM ANSWER WHERE query_id = ?', (query_id,), one=True
     )
 
-    results = database.query_db('''
-        SELECT rr.similarity_score, ds.section_text, ds.page_number, d.document_name
-        FROM RETRIEVAL_RESULT rr
-        JOIN DOCUMENT_SECTION ds ON rr.section_id = ds.section_id
-        JOIN DOCUMENT d ON ds.document_id = d.document_id
-        WHERE rr.query_id = ?
-        ORDER BY rr.similarity_score DESC
-    ''', (query_id,))
-
-    # Build compact source citations: {doc_name: sorted list of page numbers}
-    sources = {}
-    for r in results:
-        name = r['document_name']
-        if name not in sources:
-            sources[name] = set()
-        sources[name].add(r['page_number'])
-    sources = {name: sorted(pages) for name, pages in sources.items()}
-
     return render_template('answer.html',
                            query=query_row,
-                           answer=answer_row,
-                           sources=sources)
+                           answer=answer_row)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001)
+    app.run(debug=True, port=5000)

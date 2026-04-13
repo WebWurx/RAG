@@ -1,50 +1,92 @@
+"""
+Document Processor Module
+
+Study Phase (Page 4):
+- "The uploaded documents are processed to extract textual content"
+- "which is then divided into smaller meaningful sections"
+
+No specific chunking strategy, chunk size, or overlap is mentioned in the docs.
+Using a simple word-based splitting approach to create meaningful sections.
+"""
+
 import PyPDF2
 
 
-def _clean_text(text):
-    return text.replace("□", "•").replace("\ufffd", "").strip()
-
-
 def extract_text_from_pdf(filepath):
-    """Returns list of (page_number, text) tuples, one per page."""
-    pages = []
+    """Extract full text from a PDF file."""
+    text = ''
     with open(filepath, 'rb') as f:
         reader = PyPDF2.PdfReader(f)
-        for i, page in enumerate(reader.pages, start=1):
-            text = page.extract_text()
-            if text and text.strip():
-                pages.append((i, _clean_text(text)))
-    return pages
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + '\n'
+    return text.strip()
 
 
 def extract_text_from_txt(filepath):
+    """Extract full text from a TXT file."""
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        return _clean_text(f.read())
+        return f.read().strip()
 
 
-def chunk_pdf_pages(pages, chunk_size=175, overlap=25):
+def _split_sentences(text):
+    """Split text into sentences using common delimiters."""
+    import re
+    # Split on period/question/exclamation followed by space or newline
+    raw = re.split(r'(?<=[.?!])\s+', text.replace('\n', ' '))
+    return [s.strip() for s in raw if len(s.strip()) > 10]
+
+
+def chunk_text(text):
     """
-    Chunk PDF text while keeping track of the source page number.
-    Returns list of (chunk_text, page_number) tuples.
+    Divide text into smaller meaningful sections with overlap.
+
+    Study Phase (Page 4): "divided into smaller meaningful sections"
+
+    Sentence-aware chunking ensures no sentence is split mid-way.
+    Overlap between chunks preserves context at boundaries.
     """
-    chunks = []
-    step = chunk_size - overlap
-    for page_num, text in pages:
-        words = text.split()
-        for i in range(0, len(words), step):
-            chunk = ' '.join(words[i:i + chunk_size])
-            if chunk.strip():
-                chunks.append((chunk.strip(), page_num))
-    return chunks
+    sentences = _split_sentences(text)
+    if not sentences:
+        return []
 
-
-def chunk_text(text, chunk_size=175, overlap=25):
-    """Chunk plain text (TXT files). Returns list of (chunk_text, page_number=1)."""
-    words = text.split()
-    step = chunk_size - overlap
     chunks = []
-    for i in range(0, len(words), step):
-        chunk = ' '.join(words[i:i + chunk_size])
-        if chunk.strip():
-            chunks.append((chunk.strip(), 1))
+    chunk_size = 150   # target words per section
+    overlap = 25       # overlap words between sections
+    current_chunk = []
+    current_words = 0
+
+    for sentence in sentences:
+        word_count = len(sentence.split())
+
+        # If adding this sentence exceeds chunk size and we have content,
+        # save current chunk and start new one with overlap
+        if current_words + word_count > chunk_size and current_chunk:
+            chunk_text_str = ' '.join(current_chunk)
+            chunks.append(chunk_text_str.strip())
+
+            # Build overlap: take last few sentences that fit within overlap words
+            overlap_sentences = []
+            overlap_words = 0
+            for s in reversed(current_chunk):
+                s_words = len(s.split())
+                if overlap_words + s_words <= overlap:
+                    overlap_sentences.insert(0, s)
+                    overlap_words += s_words
+                else:
+                    break
+
+            current_chunk = overlap_sentences
+            current_words = overlap_words
+
+        current_chunk.append(sentence)
+        current_words += word_count
+
+    # Don't forget the last chunk
+    if current_chunk:
+        chunk_text_str = ' '.join(current_chunk)
+        if chunk_text_str.strip():
+            chunks.append(chunk_text_str.strip())
+
     return chunks
