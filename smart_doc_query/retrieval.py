@@ -24,8 +24,6 @@ import pickle
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-from transformers import pipeline
-
 import database
 
 # ── Model 1: Embedding model for semantic similarity ─────────────────────
@@ -41,11 +39,46 @@ embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 # Study Phase (Page 5): "apply NLP techniques to analyze and process
 #   both document content and user queries effectively"
 # Downloads ~250MB on first run, cached after
-nlp_answering = pipeline(
-    'question-answering',
-    model='distilbert-base-cased-distilled-squad',
-    tokenizer='distilbert-base-cased-distilled-squad'
-)
+from transformers import AutoTokenizer, AutoModelForQuestionAnswering
+import torch
+
+_qa_model_name = 'distilbert-base-cased-distilled-squad'
+_qa_tokenizer = AutoTokenizer.from_pretrained(_qa_model_name)
+_qa_model = AutoModelForQuestionAnswering.from_pretrained(_qa_model_name)
+
+
+def _extract_answer(question, context):
+    """Use NLP techniques to analyze the query and extract an answer.
+
+    Takes the question and a context passage, returns the most relevant
+    answer span extracted from the context.
+    """
+    inputs = _qa_tokenizer(question, context, return_tensors='pt',
+                           truncation=True, max_length=512)
+
+    with torch.no_grad():
+        outputs = _qa_model(**inputs)
+
+    # Find the answer span with highest confidence
+    start_scores = outputs.start_logits
+    end_scores = outputs.end_logits
+
+    start_idx = torch.argmax(start_scores)
+    end_idx = torch.argmax(end_scores)
+
+    # Ensure valid span
+    if end_idx < start_idx:
+        end_idx = start_idx
+
+    # Decode the answer tokens back to text
+    input_ids = inputs['input_ids'][0]
+    answer_tokens = input_ids[start_idx:end_idx + 1]
+    answer = _qa_tokenizer.decode(answer_tokens, skip_special_tokens=True)
+
+    # Calculate confidence score
+    confidence = float(torch.max(start_scores) + torch.max(end_scores))
+
+    return answer.strip(), confidence
 
 NOT_FOUND_MSG = 'The uploaded documents do not contain enough information to answer this question.'
 
@@ -173,13 +206,11 @@ def generate_answer(query_text, sections):
 
     # Use NLP techniques to analyze the query and extract the answer
     try:
-        result = nlp_answering(question=query_text, context=context)
-        answer = result['answer'].strip()
-        confidence = result['score']
+        answer, confidence = _extract_answer(query_text, context)
 
-        # If NLP model is confident, return its focused answer
-        # If confidence is low, fall back to the full retrieved section
-        if confidence >= 0.01 and len(answer) > 10:
+        # If NLP model extracted a meaningful answer, return it
+        # If answer is too short or empty, fall back to the full retrieved section
+        if len(answer) > 10:
             return _clean_text(answer)
         else:
             return _clean_text(sections[0]['section_text'])
