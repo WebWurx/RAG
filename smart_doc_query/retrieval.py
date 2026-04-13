@@ -114,41 +114,106 @@ def get_relevant_sections(query_text, top_k=5):
 def _normalize(text):
     """Normalize text for deduplication comparison.
 
-    Strips extra spaces, page numbers, and lowercases so that
-    "19  Types of Intruders" and "19 Types of Intruders" match.
+    Strips extra spaces, page numbers, bullets, and lowercases so that
+    minor formatting differences don't create false duplicates.
     """
     t = text.lower().strip()
-    t = re.sub(r'^\d{1,3}\s+', '', t)     # strip leading page numbers
-    t = re.sub(r'\s+', ' ', t)             # collapse whitespace
+    t = re.sub(r'^\d{1,3}\s+', '', t)          # strip leading page numbers
+    t = re.sub(r'^[•●▪▸\-\*]\s*', '', t)       # strip leading bullets
+    t = re.sub(r'^\d+[\.\)]\s*', '', t)         # strip leading numbering
+    t = re.sub(r'\s+', ' ', t)                  # collapse whitespace
     return t
+
+
+def _is_list_question(query_text):
+    """Detect if the query is asking for a list (types, kinds, steps, etc.)."""
+    q = query_text.lower().strip().rstrip('?')
+    list_patterns = [
+        r'\b(types?|kinds?|categories|forms?|classes)\s+(of|for)\b',
+        r'\b(list|name|enumerate|mention|what are the)\b',
+        r'\b(how many|different)\s+(types?|kinds?|ways?)\b',
+        r'\b(steps?|stages?|phases?|methods?|techniques?|features?|advantages?|disadvantages?)\s+(of|for|in|to)\b',
+    ]
+    for pattern in list_patterns:
+        if re.search(pattern, q):
+            return True
+    return False
+
+
+def _clean_sentence(text):
+    """Clean a sentence fragment from PDF artifacts."""
+    # Remove bullet characters
+    text = re.sub(r'^[•●▪▸\u2022\u2023\u2043]\s*', '', text)
+    # Fix broken words from PDF extraction (e.g. "malici ous" → "malicious")
+    text = re.sub(r'(\w)\s(\w{1,3})\b', lambda m: m.group(1) + m.group(2)
+                  if len(m.group(2)) <= 2 else m.group(0), text)
+    # Fix "soft ware" → "software" type breaks
+    text = re.sub(r'\b(soft|hard|fire|net|data|mal|cyber)\s+(ware|wall|work|base|ware|icious|security)\b',
+                  r'\1\2', text, flags=re.IGNORECASE)
+    # Collapse multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 
 def _split_into_sentences(text):
     """Split text into sentences, preserving numbered/bulleted list items.
 
-    Handles both regular prose (split on period) and structured lists
-    like "1) Masquerader: ... 2) Misfeasor: ..." by also splitting on
-    numbered item patterns.
+    Handles:
+    - "1) Item..." and "1. Item..." numbered lists
+    - Bullet points (●, •, -, *)
+    - Regular prose sentences
     """
     # Normalize whitespace
     text = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
 
-    # Split on numbered list items: "1)", "2)", "(1)", "a)", etc.
-    # This handles PDF content like "1) Masquerader: ... 2) Misfeasor: ..."
-    parts = re.split(r'(?=\b\d+\)\s)', text)
+    # Split on numbered list items: "1)", "2)", "1.", "2.", "(1)", etc.
+    parts = re.split(r'(?=(?:\b\d+[\.\)]\s|\([a-z\d]+\)\s))', text)
+
+    # Also split on bullet characters
+    expanded = []
+    for part in parts:
+        bullet_parts = re.split(r'(?=[•●▪▸\u2022\u2023\u2043]\s)', part)
+        expanded.extend(bullet_parts)
 
     sentences = []
-    for part in parts:
+    for part in expanded:
         # Further split on sentence boundaries within each part
         frags = re.split(r'(?<=[.?!])\s+(?=[A-Z])', part.strip())
         for frag in frags:
-            cleaned = frag.strip()
+            cleaned = _clean_sentence(frag)
             # Strip leading page numbers (e.g. "19 Types of...")
             cleaned = re.sub(r'^\d{1,3}\s+(?=[A-Z])', '', cleaned)
-            if len(cleaned) > 20:
+            if len(cleaned) > 15:
                 sentences.append(cleaned)
 
     return sentences
+
+
+def _extract_list_items(text):
+    """Extract structured list items from text.
+
+    Looks for numbered (1. or 1)) and bulleted items.
+    Returns list of items found.
+    """
+    items = []
+    # Normalize
+    text = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
+
+    # Numbered items: "1. Item", "1) Item", "a) Item"
+    numbered = re.findall(r'(?:\d+[\.\)]\s*|[a-z][\.\)]\s*)([A-Z][^.!?\d]*(?:[.!?]|$))', text)
+    for item in numbered:
+        cleaned = _clean_sentence(item.strip())
+        if len(cleaned) > 10:
+            items.append(cleaned)
+
+    # Bullet items
+    bulleted = re.findall(r'[•●▪▸\-\*]\s*([A-Z][^.!?•●]*(?:[.!?]|$))', text)
+    for item in bulleted:
+        cleaned = _clean_sentence(item.strip())
+        if len(cleaned) > 10:
+            items.append(cleaned)
+
+    return items
 
 
 def generate_answer(query_text, sections):
@@ -159,15 +224,45 @@ def generate_answer(query_text, sections):
     Study Phase (Page 4): "This retrieval-augmented approach prevents
     the system from generating unsupported or irrelevant responses"
 
-    Extracts individual sentences from all retrieved sections, scores
-    each one against the query, and returns only the most relevant
-    sentences as a focused answer.
+    Handles two paths:
+    - List questions: extracts and returns structured list items
+    - General questions: scores sentences and returns top relevant ones
     """
     if not sections:
         return NOT_FOUND_MSG
 
     query_vec = model.encode(query_text).reshape(1, -1)
+    is_list = _is_list_question(query_text)
 
+    # ── LIST PATH ─────────────────────────────────────────────────────────
+    if is_list:
+        # Try to find structured list items first
+        all_items = []
+        for section in sections:
+            all_items.extend(_extract_list_items(section['section_text']))
+
+        if all_items:
+            # Deduplicate
+            seen = set()
+            unique_items = []
+            for item in all_items:
+                norm = _normalize(item)
+                if norm not in seen:
+                    seen.add(norm)
+                    unique_items.append(item)
+
+            # Score items against query to rank by relevance
+            item_vecs = model.encode(unique_items)
+            scores = cosine_similarity(query_vec, item_vecs)[0]
+            ranked = sorted(zip(scores, unique_items), key=lambda x: x[0], reverse=True)
+
+            top_items = [item for _, item in ranked[:8]]
+            if top_items:
+                return '\n\n'.join(top_items)
+
+        # Fallback: no structured items found — fall through to general path
+
+    # ── GENERAL PATH ──────────────────────────────────────────────────────
     # Collect all sentences from retrieved sections
     all_sentences = []
     for section in sections:
@@ -177,7 +272,7 @@ def generate_answer(query_text, sections):
     if not all_sentences:
         return NOT_FOUND_MSG
 
-    # Deduplicate sentences BEFORE scoring (using normalized comparison)
+    # Deduplicate sentences BEFORE scoring
     seen_norm = set()
     unique_sentences = []
     for s in all_sentences:

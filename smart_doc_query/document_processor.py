@@ -17,10 +17,14 @@ def _clean_text(text):
     """Clean extracted PDF text.
 
     Removes standalone page numbers, fixes broken spacing from PDF
-    extraction, and strips junk characters.
+    extraction, normalizes bullet characters, and strips junk.
     """
     # Remove replacement characters
     text = text.replace('\ufffd', '')
+
+    # Normalize bullet characters to standard bullet
+    text = text.replace('□', '•')
+    text = re.sub(r'[●▪▸]', '•', text)
 
     # Remove standalone page numbers (a line that is just a number)
     text = re.sub(r'(?m)^\s*\d{1,3}\s*$', '', text)
@@ -30,6 +34,10 @@ def _clean_text(text):
 
     # Fix space before punctuation
     text = re.sub(r'\s+([.,;:!?])', r'\1', text)
+
+    # Fix common PDF word breaks
+    text = re.sub(r'\b(soft|hard|fire|net|data|mal|cyber)\s+(ware|wall|work|base|icious|security)\b',
+                  r'\1\2', text, flags=re.IGNORECASE)
 
     return text.strip()
 
