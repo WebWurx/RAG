@@ -178,17 +178,19 @@ def generate_answer(query_text, sections):
        (semantic similarity — already done before this function is called)
     2. The NLP model analyzes the query and extracts the precise answer
        from the retrieved content
+    3. Both the extracted answer and the source section are returned
 
     This ensures the answer is:
     - Accurate (NLP model understands what is being asked)
     - Strictly based on retrieved content (can only answer from given text)
     - Not unsupported or irrelevant (extracted, not generated freely)
+
+    Returns a dict with 'answer' (NLP extracted) and 'context' (full section).
     """
     if not sections:
-        return NOT_FOUND_MSG
+        return {'answer': NOT_FOUND_MSG, 'context': ''}
 
     # Build context from top retrieved sections (cleaned)
-    # Use top 3 sections to give the NLP model enough content to work with
     context_parts = []
     total_words = 0
     for section in sections[:3]:
@@ -200,21 +202,19 @@ def generate_answer(query_text, sections):
         total_words += words
 
     context = ' '.join(context_parts)
+    full_section = _clean_text(sections[0]['section_text'])
 
     if not context or len(context) < 20:
-        return NOT_FOUND_MSG
+        return {'answer': NOT_FOUND_MSG, 'context': ''}
 
     # Use NLP techniques to analyze the query and extract the answer
     try:
         answer, confidence = _extract_answer(query_text, context)
 
-        # If NLP model extracted a meaningful answer, return it
-        # If answer is too short or empty, fall back to the full retrieved section
         if len(answer) > 10:
-            return _clean_text(answer)
+            return {'answer': _clean_text(answer), 'context': full_section}
         else:
-            return _clean_text(sections[0]['section_text'])
+            return {'answer': full_section, 'context': ''}
 
     except Exception:
-        # Fallback: return the most relevant section directly
-        return _clean_text(sections[0]['section_text'])
+        return {'answer': full_section, 'context': ''}

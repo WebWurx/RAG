@@ -219,13 +219,18 @@ def query():
             )
 
         # Generate answer from retrieved content
-        answer_text = retrieval.generate_answer(query_text, sections)
+        result = retrieval.generate_answer(query_text, sections)
+        answer_text = result['answer']
+        context_text = result.get('context', '')
 
         # Save answer to ANSWER table
         database.insert_db(
             'INSERT INTO ANSWER (query_id, answer_text) VALUES (?, ?)',
             (query_id, answer_text)
         )
+
+        # Store context in session for display on answer page
+        session['last_context'] = context_text
 
         return redirect(url_for('answer', query_id=query_id))
 
@@ -250,9 +255,13 @@ def answer(query_id):
         'SELECT * FROM ANSWER WHERE query_id = ?', (query_id,), one=True
     )
 
+    # Get context from session (if available)
+    context = session.pop('last_context', '')
+
     return render_template('answer.html',
                            query=query_row,
-                           answer=answer_row)
+                           answer=answer_row,
+                           context=context)
 
 
 if __name__ == '__main__':
