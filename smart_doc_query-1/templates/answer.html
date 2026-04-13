@@ -17,29 +17,6 @@
     </div>
 </div>
 
-<!-- Retrieved Sections -->
-{% if results %}
-<div class="card">
-    <div class="card-header card-header-white">Retrieved Document Sections</div>
-    <table class="table">
-        <thead>
-            <tr>
-                <th style="width: 80px;">Score</th>
-                <th>Section Text</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for r in results %}
-            <tr>
-                <td><span class="badge badge-info">{{ '%.2f' % r['similarity_score'] }}</span></td>
-                <td style="font-size: 12px; line-height: 1.6;">{{ r['section_text'][:300] }}{% if r['section_text']|length > 300 %}...{% endif %}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% endif %}
-
 <div style="margin-top: 1rem;">
     <a href="{{ url_for('query') }}" class="btn btn-outline-success">Ask Another Question</a>
     <a href="{{ url_for('dashboard') }}" class="btn btn-outline" style="margin-left: 0.5rem;">Dashboard</a>

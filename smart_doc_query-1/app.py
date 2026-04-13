@@ -247,18 +247,9 @@ def answer(query_id):
         'SELECT * FROM ANSWER WHERE query_id = ?', (query_id,), one=True
     )
 
-    results = database.query_db('''
-        SELECT rr.similarity_score, ds.section_text
-        FROM RETRIEVAL_RESULT rr
-        JOIN DOCUMENT_SECTION ds ON rr.section_id = ds.section_id
-        WHERE rr.query_id = ?
-        ORDER BY rr.similarity_score DESC
-    ''', (query_id,))
-
     return render_template('answer.html',
                            query=query_row,
-                           answer=answer_row,
-                           results=results)
+                           answer=answer_row)
 
 
 if __name__ == '__main__':
