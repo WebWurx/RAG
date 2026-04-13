@@ -83,7 +83,7 @@ def chunk_text(text):
 
     chunks = []
     chunk_size = 150   # target words per section
-    overlap = 25       # overlap words between sections
+    overlap = 50       # overlap words between sections
     current_chunk = []
     current_words = 0
 
