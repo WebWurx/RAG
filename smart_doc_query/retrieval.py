@@ -111,109 +111,39 @@ def get_relevant_sections(query_text, top_k=5):
     return filtered[:top_k]
 
 
-def _normalize(text):
-    """Normalize text for deduplication comparison.
+def _clean_chunk(text):
+    """Clean a chunk for display in the answer.
 
-    Strips extra spaces, page numbers, bullets, and lowercases so that
-    minor formatting differences don't create false duplicates.
+    Removes page numbers, normalizes bullets and whitespace,
+    fixes common PDF extraction artifacts.
     """
-    t = text.lower().strip()
-    t = re.sub(r'^\d{1,3}\s+', '', t)          # strip leading page numbers
-    t = re.sub(r'^[•●▪▸\-\*]\s*', '', t)       # strip leading bullets
-    t = re.sub(r'^\d+[\.\)]\s*', '', t)         # strip leading numbering
-    t = re.sub(r'\s+', ' ', t)                  # collapse whitespace
-    return t
+    # Remove leading page numbers
+    text = re.sub(r'^\d{1,3}\s+(?=[A-Z])', '', text.strip())
 
+    # Normalize bullet characters to a clean format
+    text = re.sub(r'[●▪▸\u2022\u2023\u2043]', '•', text)
+    text = text.replace('□', '•')
 
-def _is_list_question(query_text):
-    """Detect if the query is asking for a list (types, kinds, steps, etc.)."""
-    q = query_text.lower().strip().rstrip('?')
-    list_patterns = [
-        r'\b(types?|kinds?|categories|forms?|classes)\s+(of|for)\b',
-        r'\b(list|name|enumerate|mention|what are the)\b',
-        r'\b(how many|different)\s+(types?|kinds?|ways?)\b',
-        r'\b(steps?|stages?|phases?|methods?|techniques?|features?|advantages?|disadvantages?)\s+(of|for|in|to)\b',
-    ]
-    for pattern in list_patterns:
-        if re.search(pattern, q):
-            return True
-    return False
-
-
-def _clean_sentence(text):
-    """Clean a sentence fragment from PDF artifacts."""
-    # Remove bullet characters
-    text = re.sub(r'^[•●▪▸\u2022\u2023\u2043]\s*', '', text)
-    # Fix broken words from PDF extraction (e.g. "malici ous" → "malicious")
-    text = re.sub(r'(\w)\s(\w{1,3})\b', lambda m: m.group(1) + m.group(2)
-                  if len(m.group(2)) <= 2 else m.group(0), text)
-    # Fix "soft ware" → "software" type breaks
-    text = re.sub(r'\b(soft|hard|fire|net|data|mal|cyber)\s+(ware|wall|work|base|ware|icious|security)\b',
+    # Fix common PDF word breaks
+    text = re.sub(r'\b(soft|hard|fire|net|data|mal|cyber)\s+(ware|wall|work|base|icious|security)\b',
                   r'\1\2', text, flags=re.IGNORECASE)
+
     # Collapse multiple spaces
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r'  +', ' ', text)
+
+    # Fix space before punctuation
+    text = re.sub(r'\s+([.,;:!?])', r'\1', text)
+
     return text.strip()
 
 
-def _split_into_sentences(text):
-    """Split text into sentences, preserving numbered/bulleted list items.
-
-    Handles:
-    - "1) Item..." and "1. Item..." numbered lists
-    - Bullet points (●, •, -, *)
-    - Regular prose sentences
-    """
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
-
-    # Split on numbered list items: "1)", "2)", "1.", "2.", "(1)", etc.
-    parts = re.split(r'(?=(?:\b\d+[\.\)]\s|\([a-z\d]+\)\s))', text)
-
-    # Also split on bullet characters
-    expanded = []
-    for part in parts:
-        bullet_parts = re.split(r'(?=[•●▪▸\u2022\u2023\u2043]\s)', part)
-        expanded.extend(bullet_parts)
-
-    sentences = []
-    for part in expanded:
-        # Further split on sentence boundaries within each part
-        frags = re.split(r'(?<=[.?!])\s+(?=[A-Z])', part.strip())
-        for frag in frags:
-            cleaned = _clean_sentence(frag)
-            # Strip leading page numbers (e.g. "19 Types of...")
-            cleaned = re.sub(r'^\d{1,3}\s+(?=[A-Z])', '', cleaned)
-            if len(cleaned) > 15:
-                sentences.append(cleaned)
-
-    return sentences
-
-
-def _extract_list_items(text):
-    """Extract structured list items from text.
-
-    Looks for numbered (1. or 1)) and bulleted items.
-    Returns list of items found.
-    """
-    items = []
-    # Normalize
-    text = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
-
-    # Numbered items: "1. Item", "1) Item", "a) Item"
-    numbered = re.findall(r'(?:\d+[\.\)]\s*|[a-z][\.\)]\s*)([A-Z][^.!?\d]*(?:[.!?]|$))', text)
-    for item in numbered:
-        cleaned = _clean_sentence(item.strip())
-        if len(cleaned) > 10:
-            items.append(cleaned)
-
-    # Bullet items
-    bulleted = re.findall(r'[•●▪▸\-\*]\s*([A-Z][^.!?•●]*(?:[.!?]|$))', text)
-    for item in bulleted:
-        cleaned = _clean_sentence(item.strip())
-        if len(cleaned) > 10:
-            items.append(cleaned)
-
-    return items
+def _normalize_for_dedup(text):
+    """Normalize text for deduplication — aggressive stripping."""
+    t = text.lower().strip()
+    t = re.sub(r'^\d{1,3}\s+', '', t)
+    t = re.sub(r'^[•●▪▸\-\*]\s*', '', t)
+    t = re.sub(r'\s+', ' ', t)
+    return t
 
 
 def generate_answer(query_text, sections):
@@ -224,87 +154,37 @@ def generate_answer(query_text, sections):
     Study Phase (Page 4): "This retrieval-augmented approach prevents
     the system from generating unsupported or irrelevant responses"
 
-    Handles two paths:
-    - List questions: extracts and returns structured list items
-    - General questions: scores sentences and returns top relevant ones
+    Strategy: Return the top 2-3 most relevant chunks directly, cleaned
+    and deduplicated. The chunking already creates meaningful sections —
+    if chunks are good, they ARE the answer. This works for lists, prose,
+    definitions, and any PDF format without fragile regex parsing.
     """
     if not sections:
         return NOT_FOUND_MSG
 
-    query_vec = model.encode(query_text).reshape(1, -1)
-    is_list = _is_list_question(query_text)
-
-    # ── LIST PATH ─────────────────────────────────────────────────────────
-    if is_list:
-        # Try to find structured list items first
-        all_items = []
-        for section in sections:
-            all_items.extend(_extract_list_items(section['section_text']))
-
-        if all_items:
-            # Deduplicate
-            seen = set()
-            unique_items = []
-            for item in all_items:
-                norm = _normalize(item)
-                if norm not in seen:
-                    seen.add(norm)
-                    unique_items.append(item)
-
-            # Score items against query to rank by relevance
-            item_vecs = model.encode(unique_items)
-            scores = cosine_similarity(query_vec, item_vecs)[0]
-            ranked = sorted(zip(scores, unique_items), key=lambda x: x[0], reverse=True)
-
-            top_items = [item for _, item in ranked[:8]]
-            if top_items:
-                return '\n\n'.join(top_items)
-
-        # Fallback: no structured items found — fall through to general path
-
-    # ── GENERAL PATH ──────────────────────────────────────────────────────
-    # Collect all sentences from retrieved sections
-    all_sentences = []
+    # Clean and deduplicate the retrieved sections
+    seen = set()
+    clean_sections = []
     for section in sections:
-        fragments = _split_into_sentences(section['section_text'])
-        all_sentences.extend(fragments)
+        cleaned = _clean_chunk(section['section_text'])
+        norm = _normalize_for_dedup(cleaned[:100])
+        if norm not in seen and len(cleaned) > 20:
+            seen.add(norm)
+            clean_sections.append(cleaned)
 
-    if not all_sentences:
+    if not clean_sections:
         return NOT_FOUND_MSG
 
-    # Deduplicate sentences BEFORE scoring
-    seen_norm = set()
-    unique_sentences = []
-    for s in all_sentences:
-        norm = _normalize(s)
-        if norm not in seen_norm:
-            seen_norm.add(norm)
-            unique_sentences.append(s)
+    # Return top 2-3 chunks — trimmed to ~500 words max total
+    answer_parts = []
+    total_words = 0
+    max_words = 500
 
-    if not unique_sentences:
-        return NOT_FOUND_MSG
-
-    # Score each sentence against the query using semantic similarity
-    sentence_vecs = model.encode(unique_sentences)
-    scores = cosine_similarity(query_vec, sentence_vecs)[0]
-
-    # Rank sentences by score
-    ranked = sorted(zip(scores, unique_sentences), key=lambda x: x[0], reverse=True)
-
-    # Filter: only keep sentences scoring at least 25% of the top score
-    top_score = ranked[0][0] if ranked else 0
-    min_score = top_score * 0.25
-
-    # Pick top relevant sentences
-    answer_sentences = []
-    for score, sentence in ranked:
-        if score < min_score:
+    for chunk in clean_sections[:3]:
+        words = chunk.split()
+        if total_words + len(words) > max_words and answer_parts:
             break
-        answer_sentences.append(sentence.strip())
-        if len(answer_sentences) == 6:
-            break
+        answer_parts.append(chunk)
+        total_words += len(words)
 
-    if not answer_sentences:
-        return NOT_FOUND_MSG
-
-    return '\n\n'.join(answer_sentences)
+    return '\n\n'.join(answer_parts)
