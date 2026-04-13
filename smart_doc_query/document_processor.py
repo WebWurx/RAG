@@ -10,6 +10,28 @@ Using a simple word-based splitting approach to create meaningful sections.
 """
 
 import PyPDF2
+import re
+
+
+def _clean_text(text):
+    """Clean extracted PDF text.
+
+    Removes standalone page numbers, fixes broken spacing from PDF
+    extraction, and strips junk characters.
+    """
+    # Remove replacement characters
+    text = text.replace('\ufffd', '')
+
+    # Remove standalone page numbers (a line that is just a number)
+    text = re.sub(r'(?m)^\s*\d{1,3}\s*$', '', text)
+
+    # Fix multiple spaces into single space
+    text = re.sub(r'  +', ' ', text)
+
+    # Fix space before punctuation
+    text = re.sub(r'\s+([.,;:!?])', r'\1', text)
+
+    return text.strip()
 
 
 def extract_text_from_pdf(filepath):
@@ -21,13 +43,13 @@ def extract_text_from_pdf(filepath):
             page_text = page.extract_text()
             if page_text:
                 text += page_text + '\n'
-    return text.strip()
+    return _clean_text(text)
 
 
 def extract_text_from_txt(filepath):
     """Extract full text from a TXT file."""
     with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-        return f.read().strip()
+        return _clean_text(f.read())
 
 
 def _split_sentences(text):
