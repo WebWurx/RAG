@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Doc Query</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+{% block body %}
+{% if session.get('user_id') %}
+
+<!-- Navbar -->
+<nav class="app-navbar">
+    <a class="app-brand" href="{{ url_for('dashboard') }}">Smart Doc Query</a>
+    <div class="app-nav-links">
+        <a class="app-nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}"
+           href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a class="app-nav-link {% if request.endpoint in ('query', 'answer') %}active{% endif %}"
+           href="{{ url_for('query') }}">Ask a Question</a>
+        <a class="app-nav-link" href="{{ url_for('logout') }}">Logout ({{ session['username'] }})</a>
+    </div>
+</nav>
+
+<!-- Page header -->
+<div class="page-header">
+    <h1>{% block page_title %}{% endblock %}</h1>
+    <p>{% block page_subtitle %}{% endblock %}</p>
+</div>
+
+<!-- Content -->
+<div class="content">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="alert alert-{% if category == 'error' %}danger{% else %}{{ category }}{% endif %}">
+                    <span>{{ message }}</span>
+                    <button class="alert-close" onclick="this.parentElement.remove()">&times;</button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+</div>
+
+<!-- Footer -->
+<footer class="app-footer">
+    &copy; 2025 Smart Doc Query &mdash; Retrieval-Augmented AI System for Intelligent Document Querying
+</footer>
+
+{% endif %}
+{% endblock %}
+
+</body>
+</html>
