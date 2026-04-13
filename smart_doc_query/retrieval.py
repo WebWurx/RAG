@@ -163,6 +163,33 @@ def _clean_text(text):
     return text.strip()
 
 
+def _pick_best_section(query_text, sections, fallback_context):
+    """Pick the section most likely to directly answer the query.
+
+    Heuristics (priority order):
+    1. Prefer sections containing a numbered list (1. pattern) — signals enumerated answer
+    2. Prefer sections with most query keyword matches
+    3. Fall back to full concatenated context if no section stands out
+    """
+    query_words = {w.lower() for w in query_text.split() if len(w) >= 4}
+
+    best_section = None
+    best_score = -1
+
+    for section in sections[:3]:
+        text = _clean_text(section['section_text'])
+        has_list = bool(re.search(r'\b1[.)]\s', text))
+        keyword_hits = sum(1 for w in query_words if w in text.lower())
+        score = (10 if has_list else 0) + keyword_hits
+        if score > best_score:
+            best_score = score
+            best_section = text
+
+    if best_score <= 0:
+        return fallback_context
+    return best_section
+
+
 # ── Answer generation using NLP techniques ────────────────────────────────
 # Study Phase (Page 4): "analyzes the query using NLP techniques"
 # Study Phase (Page 4): "generates an accurate answer strictly based
@@ -214,7 +241,9 @@ def generate_answer(query_text, sections):
         if len(answer) > 10:
             return {'answer': _clean_text(answer), 'context': full_section}
         else:
-            return {'answer': full_section, 'context': ''}
+            best = _pick_best_section(query_text, sections, context)
+            return {'answer': best, 'context': ''}
 
     except Exception:
-        return {'answer': full_section, 'context': ''}
+        best = _pick_best_section(query_text, sections, context)
+        return {'answer': best, 'context': ''}
