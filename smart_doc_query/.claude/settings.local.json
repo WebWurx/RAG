@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5000/)",
+      "Bash(grep -E \"\\\\.\\(txt|py|md\\)$\")",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(cmd.exe:*)",
+      "Bash(netstat -ano)",
+      "Bash(kill -9 3588 24992 15444)",
+      "Bash(powershell:*)",
+      "Bash(curl -s http://127.0.0.1:5000/login)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/query -d \"query_text=types+of+firewall\" -c /tmp/cookies.txt -b /tmp/cookies.txt -L)"
+    ]
+  }
+}
