@@ -1,0 +1,61 @@
+{% extends 'base.html' %}
+
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Manage your documents and start querying{% endblock %}
+
+{% block content %}
+
+<div class="row">
+
+    <!-- Upload Card -->
+    <div class="col-5">
+        <div class="card">
+            <div class="card-header card-header-primary">Upload Document</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('upload') }}" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label class="form-label">Select PDF or TXT file</label>
+                        <input type="file" name="file" class="form-control" accept=".pdf,.txt" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Upload &amp; Process</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Documents List -->
+    <div class="col-7">
+        <div class="card">
+            <div class="card-header card-header-white">My Documents</div>
+            {% if docs %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>File Name</th>
+                        <th>Type</th>
+                        <th>Upload Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for doc in docs %}
+                    <tr>
+                        <td>{{ doc['document_name'] }}</td>
+                        <td><span class="badge badge-info">{{ doc['file_type'].upper() }}</span></td>
+                        <td>{{ doc['upload_date'] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty">No documents uploaded yet.</div>
+            {% endif %}
+        </div>
+    </div>
+
+</div>
+
+<div style="text-align: center; margin-top: 1rem;">
+    <a href="{{ url_for('query') }}" class="btn btn-success btn-lg">Ask a Question</a>
+</div>
+
+{% endblock %}

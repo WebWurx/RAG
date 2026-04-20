@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+
+{% block page_title %}Query Results{% endblock %}
+{% block page_subtitle %}Results for: "{{ query['query_text'] }}"{% endblock %}
+
+{% block content %}
+
+<!-- Generated Answer -->
+<div class="card answer-card">
+    <div class="card-header card-header-success">Generated Answer</div>
+    <div class="card-body">
+        {% if answer %}
+            <p class="answer-text">{{ answer['answer_text'] }}</p>
+        {% else %}
+            <p style="color: var(--gray-500); margin: 0;">No answer could be generated.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Retrieved Section (context) -->
+{% if context %}
+<div class="card" style="margin-top: 1rem;">
+    <div class="card-header card-header-white">Retrieved Document Section</div>
+    <div class="card-body">
+        <p style="font-size: 12px; line-height: 1.8; color: var(--gray-600); white-space: pre-wrap; margin: 0;">{{ context }}</p>
+    </div>
+</div>
+{% endif %}
+
+<div style="margin-top: 1rem;">
+    <a href="{{ url_for('query') }}" class="btn btn-outline-success">Ask Another Question</a>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-outline" style="margin-left: 0.5rem;">Dashboard</a>
+</div>
+
+{% endblock %}
