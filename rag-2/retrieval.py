@@ -150,10 +150,71 @@ _DEFINITION_QUERY_PATTERN = re.compile(
     r'^\s*(what\s+is|what\s+are|what\s+does|define|meaning\s+of|definition\s+of)\b',
     re.IGNORECASE
 )
+_DEFINITION_PHRASE_PATTERN = re.compile(
+    r'\b(stands?\s+for|means?|refers?\s+to|definition\s+of|meaning\s+of)\b',
+    re.IGNORECASE
+)
 
 
 def _is_definition_query(query_text):
-    return bool(_DEFINITION_QUERY_PATTERN.match(query_text or ''))
+    if not query_text:
+        return False
+    if _DEFINITION_QUERY_PATTERN.match(query_text):
+        return True
+    return bool(_DEFINITION_PHRASE_PATTERN.search(query_text))
+
+
+_DEFINITION_VERB_PATTERNS = [
+    r'stands?\s+for',
+    r'refers?\s+to',
+    r'can\s+be\s+defined\s+as',
+    r'means?',
+    r'is\s+a\b|is\s+an\b|is\s+the\b|is\s+defined',
+    r'are\s+a\b|are\s+the\b|are\s+defined',
+    r'is|are',
+]
+
+
+def _find_definition_sentence(section_text, key_term):
+    """Find the strongest definition sentence for key_term in section_text.
+
+    Strategies, in order:
+    1. Direct colon-style: "<Term>: <description>" — handles entries like
+       "Hooking: changing applicant's execution flow" where the PDF has no
+       terminal punctuation, so the sentence-splitter would glue the entry
+       onto its neighbors.
+    2. Verb-pattern priority over split sentences ("stands for" > "refers to"
+       > "means" > "is/are").
+
+    Returns (sentence, priority) or (None, None). Lower priority is stronger.
+    """
+    if not section_text or not key_term:
+        return None, None
+    term = re.escape(key_term)
+
+    # Strategy 1: colon-prefixed entry. Boundary is start-of-text, whitespace,
+    # or a dash/punctuation so we match "Hooking:" after "– " or sentence end.
+    colon_re = re.compile(
+        rf'(?:^|(?<=[\s\-–—.!?(]))\b{term}\b\s*:\s*([^\n.!?]{{5,250}})',
+        re.IGNORECASE
+    )
+    m = colon_re.search(section_text)
+    if m:
+        sentence = f"{key_term}: {m.group(1).strip()}"
+        return sentence, 0
+
+    # Strategy 2: verb-pattern priority on split sentences.
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', section_text)
+                 if s.strip() and not _is_header_like(s.strip())]
+    for priority, verb_pattern in enumerate(_DEFINITION_VERB_PATTERNS, start=1):
+        full_pattern = re.compile(
+            rf'\b{term}\b[^.!?\n]{{0,80}}?\b(?:{verb_pattern})\b',
+            re.IGNORECASE
+        )
+        for sentence in sentences:
+            if full_pattern.search(sentence):
+                return sentence, priority
+    return None, None
 
 
 def _extract_key_term(query_text):
@@ -175,6 +236,10 @@ def _extract_key_term(query_text):
     q = re.sub(r'^\s*(a|an|the)\s+', '', q, flags=re.IGNORECASE)
     # Strip trailing verb phrases like "stand for", "mean"
     q = re.sub(r'\s+(stand\s+for|stands\s+for|mean|means|refer\s+to|refers\s+to).*$',
+               '', q, flags=re.IGNORECASE)
+    # Strip trailing context like "in rootkits" / "inside X" / "within Y" so
+    # "hooking in rootkits" → "hooking" rather than "hooking in rootkits".
+    q = re.sub(r'\s+(?:in|inside|within|used\s+in|used\s+by)\s+\w+(?:\s+\w+)?\s*$',
                '', q, flags=re.IGNORECASE)
 
     q = q.strip().strip('"\'').strip()
@@ -215,7 +280,7 @@ def _definition_boost(section_text, key_term):
     return 0.0
 
 
-def get_relevant_sections(query_text, top_k=8):
+def get_relevant_sections(query_text, top_k=8, document_ids=None):
     """Retrieve the most relevant document sections using semantic similarity.
 
     Study Phase (Page 4): "ensures that related information is identified
@@ -225,12 +290,23 @@ def get_relevant_sections(query_text, top_k=8):
     "define X"), sections containing definition patterns like "X is",
     "X stands for", "X refers to" receive a small score boost so the
     actual definition ranks above tangential mentions.
+
+    When `document_ids` is a non-empty list, retrieval is scoped to sections
+    belonging to those documents only. None / empty means "search all".
     """
     query_vec = embedding_model.encode(query_text).reshape(1, -1)
 
-    rows = database.query_db(
-        'SELECT section_id, document_id, section_text, embedding FROM DOCUMENT_SECTION'
-    )
+    if document_ids:
+        placeholders = ','.join('?' * len(document_ids))
+        rows = database.query_db(
+            f'SELECT section_id, document_id, section_text, embedding '
+            f'FROM DOCUMENT_SECTION WHERE document_id IN ({placeholders})',
+            tuple(document_ids)
+        )
+    else:
+        rows = database.query_db(
+            'SELECT section_id, document_id, section_text, embedding FROM DOCUMENT_SECTION'
+        )
     if not rows:
         return []
 
@@ -293,7 +369,7 @@ def _clean_text(text):
     text = re.sub(r'^\d{1,3}\s+(?=[A-Z])', '', text.strip())
 
     # Normalize weird bullet characters
-    text = re.sub(r'[▯□●▪▸❖❑✓✗\u2022\u2023\u2043]', '• ', text)
+    text = re.sub(r'[▯□●▪▸❖❑✓✗\u2022\u2023\u2043\uf0a7\uf0b7\uf0a8\uf0fc\uf0a4\uf0d8]', '• ', text)
 
     # Remove "(B)" / "(A)" site markers mid-sentence
     text = re.sub(r'\s*\([AB]\)\s*', ' ', text)
@@ -331,13 +407,23 @@ def _clean_text(text):
 
 
 _LIST_QUERY_PATTERN = re.compile(
-    r'\b(what\s+are|list|types\s+of|kinds\s+of|examples\s+of)\b',
+    r'\b(what\s+are|list|types?\s+of|kinds?\s+of|examples?\s+of|categories\s+of|approaches\s+to|steps\s+(?:in|of|to|taken|that|which|the)|phases\s+of|ways\s+to|services\s+of|benefits?\s+of|symptoms?\s+of|disadvantages\s+of|advantages\s+of|requirements\s+(?:in|of|for))\b',
+    re.IGNORECASE
+)
+# Implicit list query — noun-phrase that ends in a plural collection noun
+# (e.g. "secure socket layer protocols" → asking for the protocol list).
+_IMPLICIT_LIST_SUFFIX = re.compile(
+    r'\b(protocols|services|types|kinds|examples|approaches|phases|benefits|methods|techniques|ways|requirements|symptoms|disadvantages|advantages|features|categories|properties|functionalities|aspects|fields|steps)\s*\??\s*$',
     re.IGNORECASE
 )
 
 
 def _is_list_query(query_text):
-    return bool(_LIST_QUERY_PATTERN.search(query_text or ''))
+    if not query_text:
+        return False
+    if _LIST_QUERY_PATTERN.search(query_text):
+        return True
+    return bool(_IMPLICIT_LIST_SUFFIX.search(query_text))
 
 
 def _is_header_like(sentence):
@@ -360,26 +446,129 @@ def _is_header_like(sentence):
     return False
 
 
-def _extract_list_items(text):
-    """Extract list items from text — lines starting with numbers,
-    bullets, or "•". Returns a list of cleaned item strings.
+_LIST_STOP_WORDS = {
+    'what', 'are', 'is', 'the', 'a', 'an', 'of', 'in', 'at', 'on', 'for',
+    'with', 'and', 'or', 'how', 'do', 'does', 'to', 'list', 'kinds',
+    'examples', 'taken', 'takes', 'take', 'by', 'that', 'which', 'some',
+    'few', 'this', 'these', 'those',
+}
+
+
+def _select_relevant_segment(text, query_text):
+    """Pick the segment whose preamble best matches `query_text`.
+
+    Anchors are sentence-like fragments ending in ':' (e.g.
+    'Following are the steps … at the sender site:'). When a chunk contains
+    multiple distinct lists (PGP property bullets + sender-site step bullets),
+    this scopes extraction to just the segment the user actually asked about.
+
+    Returns the substring between the best-matching anchor and the next
+    anchor, or None if no anchor matches the query well.
+    """
+    anchor_re = re.compile(
+        r'(?:^|(?<=[.!?]\s))([A-Z][^\n.!?]{4,150}?):\s+'
+    )
+    # Reject preambles that have swallowed a numbered list marker like
+    # "Types of Intruders 1) Masquerader" — that's preamble + list-item title,
+    # not a real preamble. Without this filter we'd lose the first item.
+    anchors = []
+    for m in anchor_re.finditer(text):
+        preamble = m.group(1)
+        if re.search(r'\b\d+[.)]\s', preamble):
+            continue
+        anchors.append((m.start(), m.end(), preamble))
+    if not anchors:
+        return None
+
+    query_words = {w for w in re.findall(r'\w+', query_text.lower())
+                   if w not in _LIST_STOP_WORDS and len(w) > 2}
+    if not query_words:
+        return None
+
+    best_score = 0
+    best_idx = -1
+    for i, (_, _, preamble) in enumerate(anchors):
+        preamble_words = {w for w in re.findall(r'\w+', preamble.lower())
+                          if w not in _LIST_STOP_WORDS and len(w) > 2}
+        overlap = len(query_words & preamble_words)
+        if overlap > best_score:
+            best_score = overlap
+            best_idx = i
+
+    if best_score < 1:
+        return None
+
+    seg_start = anchors[best_idx][1]
+    seg_end = anchors[best_idx + 1][0] if best_idx + 1 < len(anchors) else len(text)
+    return text[seg_start:seg_end]
+
+
+def _extract_list_items(text, query_text=''):
+    """Extract list items from text. Tries strategies in order:
+
+    1. Bullet/number markers (•, -, *, "1)", "1.", PDF "o " artifact).
+       When `query_text` is provided, extraction is first scoped to the
+       segment whose preamble best matches the query — handles chunks with
+       multiple unrelated lists (PGP properties + sender-site steps).
+    2. 'Title: description.' inline-list style, anchored at a preamble like
+       'Some types of X:' or 'X include:'. Used by sections where the PDF
+       lost the bullet markers during extraction (e.g. SSL alert types).
     """
     if not text:
         return []
+
+    # Strategy 1: marker-based extraction (scoped to query-relevant segment)
     items = []
-    # Normalize PDF "o " list artifact to bullet before scanning
     normalized = re.sub(r'(^|\s)o\s+(?=[A-Z])', r'\1• ', text)
-    # Split on line breaks first; if none, try splitting before bullet/number
-    chunks = re.split(r'(?:\n|(?<=\S)\s+(?=•|\d+[.)]\s))', normalized)
+    scoped = normalized
+    if query_text:
+        segment = _select_relevant_segment(normalized, query_text)
+        if segment is not None:
+            scoped = segment
+    chunks = re.split(r'(?:\n|(?<=\S)\s+(?=•|\d+[.)]\s))', scoped)
     for chunk in chunks:
         chunk = chunk.strip()
         if not chunk:
             continue
         m = re.match(r'^(?:•|[-*]|\d+[.)])\s*(.+)$', chunk)
         if m:
-            item = m.group(1).strip().rstrip('.,;:')
-            if 2 < len(item) < 200:
+            raw = m.group(1).strip()
+            # Trim at first sentence boundary so trailing prose from the next
+            # section ('... collection. Need for intrusion Monitoring …')
+            # doesn't bloat the item past the length cap.
+            cut = re.match(r'^(.{5,250}?[.!?])(?:\s+[A-Z]|\s*$)', raw)
+            item = (cut.group(1) if cut else raw).strip().rstrip('.,;:')
+            if 2 < len(item) < 250:
                 items.append(item)
+    if len(items) >= 2:
+        return items
+
+    # Strategy 2: inline 'Title: description.' items after a preamble.
+    # Anchor at the LAST preamble in the chunk so we capture the items right
+    # after the relevant heading rather than every "X:" sentence in the chunk.
+    anchor_re = re.compile(
+        r'\b(?:(?:some\s+)?types?\s+of\s+\w+|kinds?\s+of\s+\w+|examples?\s+of\s+\w+|categories\s+of\s+\w+|are\s+as\s+follows|include[s]?|are)\s*:\s*',
+        re.IGNORECASE
+    )
+    matches = list(anchor_re.finditer(text))
+    body = text[matches[-1].end():] if matches else text
+
+    item_re = re.compile(
+        r'(?:^|(?<=[.!?]\s))([A-Z][A-Za-z][\w\s\-/]{1,40}):\s+([^.!?]{10,250}?[.!?])'
+    )
+    inline_items = []
+    for m in item_re.finditer(body):
+        title = m.group(1).strip()
+        desc = m.group(2).strip().rstrip('.!?').rstrip()
+        if len(title.split()) > 6:
+            continue
+        item = f'{title}: {desc}'
+        if 8 < len(item) < 280:
+            inline_items.append(item)
+        if len(inline_items) >= 10:
+            break
+    if len(inline_items) >= 2:
+        return inline_items
     return items
 
 
@@ -403,7 +592,7 @@ def _pick_best_section(query_text, sections, fallback_context):
     if _is_list_query(query_text):
         for s in relevant:
             text = _clean_text(s['section_text'])
-            items = _extract_list_items(text)
+            items = _extract_list_items(text, query_text)
             if len(items) >= 2:
                 return '\n'.join(f'• {item}' for item in items[:10])
 
@@ -514,7 +703,35 @@ def generate_answer(query_text, sections):
     if not context or len(context) < 20:
         return {'answer': NOT_FOUND_MSG, 'context': ''}
 
-    # Use NLP techniques to analyze the query and extract the answer
+    # List queries: skip the QA model entirely. SQuAD-style models return one
+    # narrow span (e.g. just "Handshake failure") and the list extractor in
+    # _pick_best_section produces the full bulleted answer. Routed before
+    # the definition branch because "what are the types of X" matches both
+    # patterns but is fundamentally a list question.
+    if _is_list_query(query_text):
+        best = _pick_best_section(query_text, sections, context)
+        return {'answer': _polish_answer(best), 'context': full_section}
+
+    # Definition queries: prefer an explicit "X stands for / refers to / means / is"
+    # sentence. Search top sections with verb-pattern priority — a "PGP stands
+    # for …" sentence in chunk #2 beats a "PGP is open source" sentence in chunk #1.
+    if _is_definition_query(query_text):
+        key_term = _extract_key_term(query_text)
+        if key_term:
+            best_def = None
+            best_priority = None
+            for section in sections[:5]:
+                cleaned = _clean_text(section['section_text'])
+                sentence, priority = _find_definition_sentence(cleaned, key_term)
+                if sentence is not None and (best_priority is None or priority < best_priority):
+                    best_def = sentence
+                    best_priority = priority
+                    if priority == 0:
+                        break
+            if best_def:
+                return {'answer': _polish_answer(best_def), 'context': full_section}
+
+    # General queries: use NLP techniques to analyze the query and extract the answer
     try:
         answer, confidence = _extract_answer(query_text, context)
 

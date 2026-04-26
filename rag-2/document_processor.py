@@ -26,7 +26,7 @@ def _clean_text(text):
     text = text.replace('\ufffd', '')
 
     # Normalize weird bullet characters to standard bullet + space
-    text = re.sub(r'[▯□●▪▸❖❑✓✗\u2022\u2023\u2043]', '• ', text)
+    text = re.sub(r'[▯□●▪▸❖❑✓✗\u2022\u2023\u2043\uf0a7\uf0b7\uf0a8\uf0fc\uf0a4\uf0d8]', '• ', text)
 
     # Remove standalone page numbers (a line that is just a number)
     text = re.sub(r'(?m)^\s*\d{1,3}\s*$', '', text)
@@ -71,15 +71,26 @@ def _clean_text(text):
 
 
 def extract_text_from_pdf(filepath):
-    """Extract full text from a PDF file."""
-    text = ''
+    """Extract full text from a PDF file (joined). Kept for backward compat."""
+    pages = extract_pages_from_pdf(filepath)
+    return _clean_text('\n'.join(pt for _, pt in pages))
+
+
+def extract_pages_from_pdf(filepath):
+    """Extract text per-page. Returns [(page_number, cleaned_text), …].
+
+    Page numbers are 1-indexed to match the human-readable convention used in
+    the "Answer based on: doc · p. 3" UI.
+    """
+    pages = []
     with open(filepath, 'rb') as f:
         reader = PyPDF2.PdfReader(f)
-        for page in reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + '\n'
-    return _clean_text(text)
+        for i, page in enumerate(reader.pages, start=1):
+            page_text = page.extract_text() or ''
+            cleaned = _clean_text(page_text)
+            if cleaned.strip():
+                pages.append((i, cleaned))
+    return pages
 
 
 def extract_text_from_txt(filepath):
@@ -148,3 +159,17 @@ def chunk_text(text):
             chunks.append(chunk_text_str.strip())
 
     return chunks
+
+
+def chunk_pages(pages):
+    """Page-aware chunking. Each chunk belongs to exactly one page so the
+    "Answer based on: doc · p. 3" reference is unambiguous.
+
+    `pages` is a list of (page_number, page_text) tuples.
+    Returns a list of (page_number, chunk_text) tuples.
+    """
+    out = []
+    for page_num, page_text in pages:
+        for chunk in chunk_text(page_text):
+            out.append((page_num, chunk))
+    return out

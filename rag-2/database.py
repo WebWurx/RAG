@@ -87,6 +87,14 @@ def init_db():
     except Exception:
         pass  # column already exists
 
+    # Migration: add page_number for "Answer based on: doc · p. 3, 7" references.
+    # Nullable — TXT uploads and pre-migration rows leave it NULL.
+    try:
+        conn.execute('ALTER TABLE DOCUMENT_SECTION ADD COLUMN page_number INTEGER')
+        conn.commit()
+    except Exception:
+        pass
+
     conn.close()
 
 

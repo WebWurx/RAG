@@ -31,9 +31,45 @@ os.makedirs(config.UPLOAD_FOLDER, exist_ok=True)
 database.init_db()
 
 
+@app.context_processor
+def inject_sidebar_data():
+    """Provide sidebar data (documents + recent queries) to all authenticated templates."""
+    if 'user_id' in session:
+        docs = database.query_db(
+            'SELECT * FROM DOCUMENT WHERE user_id = ? ORDER BY upload_date DESC',
+            (session['user_id'],)
+        )
+        recent_queries = database.query_db(
+            'SELECT query_id, query_text FROM QUERY WHERE user_id = ? ORDER BY query_id DESC LIMIT 10',
+            (session['user_id'],)
+        )
+        return {'sidebar_docs': docs, 'sidebar_queries': recent_queries}
+    return {}
+
+
 def allowed_file(filename):
     """Check if the file type is PDF or TXT as per Study Phase (Page 4)."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
+
+
+def _format_page_label(pages):
+    """Compact label for a sorted list of page numbers.
+    [3] → "p. 3"   [3,4,5,7] → "pp. 3-5, 7"   [] → ""
+    """
+    if not pages:
+        return ''
+    runs = []
+    start = prev = pages[0]
+    for p in pages[1:]:
+        if p == prev + 1:
+            prev = p
+        else:
+            runs.append((start, prev))
+            start = prev = p
+    runs.append((start, prev))
+    parts = [str(a) if a == b else f'{a}-{b}' for a, b in runs]
+    prefix = 'p.' if len(pages) == 1 else 'pp.'
+    return f'{prefix} ' + ', '.join(parts)
 
 
 def login_required(f):
@@ -51,6 +87,8 @@ def login_required(f):
 
 @app.route('/')
 def index():
+    if 'user_id' in session:
+        return redirect(url_for('query'))
     return redirect(url_for('login'))
 
 
@@ -102,7 +140,8 @@ def login():
         if user:
             session['user_id']  = user['user_id']
             session['username'] = user['username']
-            return redirect(url_for('dashboard'))
+            session['email']    = user['email']
+            return redirect(url_for('query'))
 
         flash('Invalid username or password.', 'danger')
 
@@ -117,19 +156,6 @@ def logout():
     return redirect(url_for('login'))
 
 
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    """Dashboard — shows uploaded documents.
-    Reads from DOCUMENT table (Design Phase, Page 9).
-    """
-    docs = database.query_db(
-        'SELECT * FROM DOCUMENT WHERE user_id = ? ORDER BY upload_date DESC',
-        (session['user_id'],)
-    )
-    return render_template('dashboard.html', docs=docs)
-
-
 @app.route('/upload', methods=['POST'])
 @login_required
 def upload():
@@ -141,16 +167,16 @@ def upload():
     """
     if 'file' not in request.files:
         flash('No file part in the request.', 'danger')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('query'))
 
     file = request.files['file']
     if file.filename == '':
         flash('No file selected.', 'danger')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('query'))
 
     if not allowed_file(file.filename):
         flash('Only PDF and TXT files are allowed.', 'danger')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('query'))
 
     filename  = secure_filename(file.filename)
     file_type = filename.rsplit('.', 1)[1].lower()
@@ -163,29 +189,95 @@ def upload():
         (session['user_id'], filename, datetime.now().strftime('%Y-%m-%d'), file_type)
     )
 
-    # Extract text from uploaded document
+    # Extract text from uploaded document.
+    # PDFs are extracted per-page so each chunk can be tagged with its page.
+    # TXT has no pages — page_number stays NULL.
     if file_type == 'pdf':
-        text = document_processor.extract_text_from_pdf(filepath)
+        pages = document_processor.extract_pages_from_pdf(filepath)
+        page_chunks = document_processor.chunk_pages(pages)
     else:
-        text = document_processor.extract_text_from_txt(filepath)
+        txt = document_processor.extract_text_from_txt(filepath)
+        page_chunks = [(None, c) for c in document_processor.chunk_text(txt)]
 
-    if not text.strip():
+    if not page_chunks:
         flash('Could not extract text from the file.', 'danger')
-        return redirect(url_for('dashboard'))
+        return redirect(url_for('query'))
 
-    # Divide into smaller meaningful sections and store with vector representations
+    # Store sections with vector representations and page references.
     # Study Phase (Page 4): "stored in a database along with their
     # corresponding vector representations for efficient retrieval"
-    chunks = document_processor.chunk_text(text)
-    for chunk in chunks:
+    for page_num, chunk in page_chunks:
         embedding_blob = retrieval.embed_to_blob(chunk)
         database.insert_db(
-            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, embedding) VALUES (?, ?, ?)',
-            (doc_id, chunk, embedding_blob)
+            'INSERT INTO DOCUMENT_SECTION (document_id, section_text, embedding, page_number) VALUES (?, ?, ?, ?)',
+            (doc_id, chunk, embedding_blob, page_num)
         )
+    chunks = page_chunks
 
     flash(f'"{filename}" uploaded and processed successfully ({len(chunks)} sections).', 'success')
-    return redirect(url_for('dashboard'))
+    # ?just_uploaded=<id> tells the sidebar JS to auto-select this doc on landing.
+    return redirect(url_for('query', just_uploaded=doc_id))
+
+
+@app.route('/document/<int:document_id>/delete', methods=['POST'])
+@login_required
+def delete_document(document_id):
+    """Delete a user's document, its sections, related retrieval results, and the file on disk."""
+    doc = database.query_db(
+        'SELECT * FROM DOCUMENT WHERE document_id = ? AND user_id = ?',
+        (document_id, session['user_id']), one=True
+    )
+    if not doc:
+        flash('Document not found.', 'danger')
+        return redirect(url_for('query'))
+
+    conn = database.get_db()
+    try:
+        # Queries that drew on any section of this document
+        affected_query_ids = [row['query_id'] for row in conn.execute(
+            '''SELECT DISTINCT rr.query_id
+               FROM RETRIEVAL_RESULT rr
+               JOIN DOCUMENT_SECTION ds ON ds.section_id = rr.section_id
+               WHERE ds.document_id = ?''',
+            (document_id,)
+        ).fetchall()]
+
+        conn.execute(
+            '''DELETE FROM RETRIEVAL_RESULT
+               WHERE section_id IN (
+                   SELECT section_id FROM DOCUMENT_SECTION WHERE document_id = ?
+               )''',
+            (document_id,)
+        )
+
+        # Queries with no remaining retrieval results are now orphans —
+        # wipe their answers and the queries themselves.
+        for qid in affected_query_ids:
+            still_has_results = conn.execute(
+                'SELECT 1 FROM RETRIEVAL_RESULT WHERE query_id = ? LIMIT 1', (qid,)
+            ).fetchone()
+            if not still_has_results:
+                conn.execute('DELETE FROM ANSWER WHERE query_id = ?', (qid,))
+                conn.execute('DELETE FROM QUERY WHERE query_id = ?', (qid,))
+
+        conn.execute('DELETE FROM DOCUMENT_SECTION WHERE document_id = ?', (document_id,))
+        conn.execute(
+            'DELETE FROM DOCUMENT WHERE document_id = ? AND user_id = ?',
+            (document_id, session['user_id'])
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], doc['document_name'])
+    if os.path.exists(filepath):
+        try:
+            os.remove(filepath)
+        except OSError:
+            pass
+
+    flash(f'"{doc["document_name"]}" deleted.', 'success')
+    return redirect(url_for('query'))
 
 
 @app.route('/query', methods=['GET', 'POST'])
@@ -202,6 +294,21 @@ def query():
             flash('Please enter a question.', 'danger')
             return render_template('query.html')
 
+        # Optional doc-scope filter from the sidebar selection. The hidden
+        # field is a comma-separated list of document_ids; any value not
+        # owned by the current user is dropped before reaching retrieval.
+        raw_ids = request.form.get('document_ids', '').strip()
+        document_ids = None
+        if raw_ids:
+            requested = [int(x) for x in raw_ids.split(',') if x.strip().isdigit()]
+            if requested:
+                placeholders = ','.join('?' * len(requested))
+                owned = database.query_db(
+                    f'SELECT document_id FROM DOCUMENT WHERE user_id = ? AND document_id IN ({placeholders})',
+                    (session['user_id'], *requested)
+                )
+                document_ids = [row['document_id'] for row in owned] or None
+
         # Save query to QUERY table
         query_id = database.insert_db(
             'INSERT INTO QUERY (user_id, query_text, query_date) VALUES (?, ?, ?)',
@@ -209,7 +316,7 @@ def query():
         )
 
         # Retrieve relevant sections based on semantic similarity
-        sections = retrieval.get_relevant_sections(query_text)
+        sections = retrieval.get_relevant_sections(query_text, document_ids=document_ids)
 
         # Save retrieval results to RETRIEVAL_RESULT table
         for sec in sections:
@@ -258,11 +365,60 @@ def answer(query_id):
     # Get context from session (if available)
     context = session.pop('last_context', '')
 
+    # Fetch recent Q&As for stacked chat history display
+    chat_history = database.query_db(
+        '''SELECT q.query_id, q.query_text, a.answer_text
+           FROM QUERY q LEFT JOIN ANSWER a ON q.query_id = a.query_id
+           WHERE q.user_id = ? AND q.query_id <= ?
+           ORDER BY q.query_id DESC LIMIT 5''',
+        (session['user_id'], query_id)
+    )
+    chat_history = list(reversed(chat_history))
+
+    # Enrich each chat item with source documents + the page numbers each
+    # contributed (e.g. "Answer based on: notes.pdf · pp. 3-5, 7").
+    enriched_history = []
+    for item in chat_history:
+        rows = database.query_db(
+            '''SELECT d.document_id, d.document_name, d.file_type, ds.page_number
+               FROM RETRIEVAL_RESULT rr
+               JOIN DOCUMENT_SECTION ds ON rr.section_id = ds.section_id
+               JOIN DOCUMENT d ON ds.document_id = d.document_id
+               WHERE rr.query_id = ?''',
+            (item['query_id'],)
+        )
+        # Group by document_id, collect distinct page numbers.
+        by_doc = {}
+        for r in rows:
+            entry = by_doc.setdefault(r['document_id'], {
+                'document_name': r['document_name'],
+                'file_type': r['file_type'],
+                'pages': set(),
+            })
+            if r['page_number'] is not None:
+                entry['pages'].add(r['page_number'])
+        source_docs = []
+        for entry in by_doc.values():
+            pages = sorted(entry['pages'])
+            source_docs.append({
+                'document_name': entry['document_name'],
+                'file_type': entry['file_type'],
+                'pages': pages,
+                'pages_label': _format_page_label(pages),
+            })
+        enriched_history.append({
+            'query_id': item['query_id'],
+            'query_text': item['query_text'],
+            'answer_text': item['answer_text'],
+            'source_docs': source_docs
+        })
+
     return render_template('answer.html',
                            query=query_row,
                            answer=answer_row,
-                           context=context)
+                           context=context,
+                           chat_history=enriched_history)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001)
